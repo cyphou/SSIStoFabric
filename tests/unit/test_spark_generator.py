@@ -2,6 +2,7 @@
 Unit tests for the Spark Notebook Generator.
 """
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -9,9 +10,13 @@ import pytest
 from ssis_to_fabric.analyzer.dtsx_parser import DTSXParser
 from ssis_to_fabric.analyzer.models import (
     Column,
+    ConnectionManager,
+    ConnectionType,
+    ControlFlowTask,
     DataFlowComponent,
     DataFlowComponentType,
     SSISPackage,
+    TaskType,
 )
 from ssis_to_fabric.config import MigrationConfig
 from ssis_to_fabric.engine.spark_generator import SparkNotebookGenerator
@@ -510,3 +515,326 @@ class TestSSISExprToPySpark:
     def test_fallback_expr(self) -> None:
         r = self.e("some_complex + thing")
         assert "F.expr" in r
+
+    def test_fallback_no_inline_comment(self) -> None:
+        """Fallback must NOT contain a # comment that would break withColumn() parens."""
+        r = self.e("some_complex + thing")
+        assert "#" not in r
+
+
+# =========================================================================
+# Generated Python validity – regression tests for code quality bugs
+# =========================================================================
+
+
+def _build_data_flow_package(
+    sources: list[DataFlowComponent] | None = None,
+    transforms: list[DataFlowComponent] | None = None,
+    destinations: list[DataFlowComponent] | None = None,
+    connection_managers: list[ConnectionManager] | None = None,
+) -> tuple[SSISPackage, ControlFlowTask]:
+    """Build a minimal SSISPackage with a single DATA_FLOW task."""
+    all_comps: list[DataFlowComponent] = []
+    if sources:
+        all_comps.extend(sources)
+    if transforms:
+        all_comps.extend(transforms)
+    if destinations:
+        all_comps.extend(destinations)
+
+    task = ControlFlowTask(
+        name="dft_Test",
+        task_type=TaskType.DATA_FLOW,
+        data_flow_components=all_comps,
+    )
+    pkg = SSISPackage(
+        name="TestPackage",
+        control_flow_tasks=[task],
+        connection_managers=connection_managers or [],
+    )
+    return pkg, task
+
+
+class TestGeneratedPythonValidity:
+    """Verify that generated notebooks are syntactically valid Python."""
+
+    # --- Fix 1: JDBC source read chain must not break on inline comments ---
+
+    def test_jdbc_source_read_no_inline_comment_on_option_url(
+        self, generator: SparkNotebookGenerator,
+    ) -> None:
+        """The .option('url', ...) line must NOT have a trailing # comment
+        that would absorb the \\ continuation and break the method chain."""
+        comp = _make_comp(
+            DataFlowComponentType.OLE_DB_SOURCE,
+            name="src_Orders",
+            connection_manager_ref="cmgr_Source",
+            sql_command="SELECT * FROM Orders",
+        )
+        code = generator._gen_jdbc_source_read(
+            comp,
+            var_name="df_source_src_orders",
+            conn_name="cmgr_Source",
+            query="SELECT * FROM Orders",
+        )
+        # Every line ending with \ must NOT have a # comment before the \
+        for line in code.splitlines():
+            stripped = line.rstrip()
+            if stripped.endswith("\\"):
+                before_backslash = stripped[:-1].rstrip()
+                assert "#" not in before_backslash, (
+                    f"Inline comment before \\ continuation will break the chain: {line!r}"
+                )
+
+    def test_jdbc_source_read_compiles(
+        self, generator: SparkNotebookGenerator,
+    ) -> None:
+        """Generated JDBC read code must be syntactically valid Python."""
+        comp = _make_comp(
+            DataFlowComponentType.OLE_DB_SOURCE,
+            name="src_Test",
+            connection_manager_ref="conn1",
+            sql_command="SELECT id, name FROM dbo.Customers",
+        )
+        code = generator._gen_jdbc_source_read(
+            comp,
+            var_name="df_source_test",
+            conn_name="conn1",
+            query="SELECT id, name FROM dbo.Customers",
+        )
+        # Must compile without SyntaxError
+        ast.parse(code, mode="exec")
+
+    # --- Fix 2: df bridge – transformations must be able to use 'df' ---
+
+    def test_data_flow_code_has_df_bridge(
+        self, generator: SparkNotebookGenerator,
+    ) -> None:
+        """After source reads, there must be a `df = df_source_xxx` assignment
+        so that transformations and writes can use 'df'."""
+        src = _make_comp(
+            DataFlowComponentType.OLE_DB_SOURCE,
+            name="ole_src_customers",
+            connection_manager_ref="cmgr_DW",
+            sql_command="SELECT * FROM Customers",
+        )
+        xform = _make_comp(
+            DataFlowComponentType.DERIVED_COLUMN,
+            name="der_AddTimestamp",
+            columns=[Column(name="LoadTime", expression="GETDATE()")],
+        )
+        dest = _make_comp(
+            DataFlowComponentType.OLE_DB_DESTINATION,
+            name="ole_dst_staging",
+            table_name="Staging.Customers",
+            connection_manager_ref="cmgr_DW",
+        )
+        pkg, task = _build_data_flow_package(
+            sources=[src],
+            transforms=[xform],
+            destinations=[dest],
+            connection_managers=[
+                ConnectionManager(name="cmgr_DW", connection_type=ConnectionType.OLEDB),
+            ],
+        )
+        sections = generator._generate_data_flow_code(task, pkg)
+        combined = "\n".join(sections)
+        assert "df = df_source_ole_src_customers" in combined
+
+    def test_data_flow_code_no_df_bridge_without_sources(
+        self, generator: SparkNotebookGenerator,
+    ) -> None:
+        """When there are no sources, no df bridge should be emitted."""
+        xform = _make_comp(
+            DataFlowComponentType.DERIVED_COLUMN,
+            name="der_test",
+            columns=[Column(name="col1", expression="GETDATE()")],
+        )
+        pkg, task = _build_data_flow_package(transforms=[xform])
+        sections = generator._generate_data_flow_code(task, pkg)
+        combined = "\n".join(sections)
+        assert "df = df_source_" not in combined
+
+    def test_data_flow_multiple_sources_bridge_uses_first(
+        self, generator: SparkNotebookGenerator,
+    ) -> None:
+        """With multiple sources, the df bridge should use the first source."""
+        src1 = _make_comp(
+            DataFlowComponentType.OLE_DB_SOURCE,
+            name="src_main",
+            connection_manager_ref="conn1",
+            sql_command="SELECT * FROM Main",
+        )
+        src2 = _make_comp(
+            DataFlowComponentType.OLE_DB_SOURCE,
+            name="src_ref",
+            connection_manager_ref="conn1",
+            sql_command="SELECT * FROM Ref",
+        )
+        pkg, task = _build_data_flow_package(
+            sources=[src1, src2],
+            connection_managers=[
+                ConnectionManager(name="conn1", connection_type=ConnectionType.OLEDB),
+            ],
+        )
+        sections = generator._generate_data_flow_code(task, pkg)
+        combined = "\n".join(sections)
+        assert "df = df_source_src_main" in combined
+
+    # --- Fix 3: data conversion must skip empty column names ---
+
+    def test_data_conversion_skips_empty_columns(
+        self, generator: SparkNotebookGenerator,
+    ) -> None:
+        """Columns with empty names must be filtered out, not emitted as
+        withColumn(\"\", ...)."""
+        comp = _make_comp(
+            DataFlowComponentType.DATA_CONVERSION,
+            name="dcnv_strings",
+            columns=[
+                Column(name="FirstName", data_type="str"),
+                Column(name="", data_type="str"),     # empty – must be skipped
+                Column(name="LastName", data_type="str"),
+                Column(name="", data_type=""),         # empty – must be skipped
+            ],
+        )
+        code = generator._gen_data_conversion(comp)
+
+        assert "FirstName" in code
+        assert "LastName" in code
+        # Must NOT contain withColumn("", ...)
+        assert 'withColumn("")' not in code
+        assert 'withColumn("", ' not in code
+
+    def test_data_conversion_all_empty_shows_fallback(
+        self, generator: SparkNotebookGenerator,
+    ) -> None:
+        """If ALL columns have empty names, the fallback placeholder is shown."""
+        comp = _make_comp(
+            DataFlowComponentType.DATA_CONVERSION,
+            name="dcnv_empty",
+            columns=[
+                Column(name="", data_type="str"),
+                Column(name="", data_type="int"),
+            ],
+        )
+        code = generator._gen_data_conversion(comp)
+        # Should fall back to the generic placeholder
+        assert "column_name" in code
+
+    # --- Fix 3b: derived columns must skip empty column names ---
+
+    def test_derived_column_skips_empty_names(
+        self, generator: SparkNotebookGenerator,
+    ) -> None:
+        """Derived column generator must skip columns with empty names."""
+        comp = _make_comp(
+            DataFlowComponentType.DERIVED_COLUMN,
+            name="der_mixed",
+            columns=[
+                Column(name="LoadId", expression="@[$Package::LoadId]"),
+                Column(name="", expression="GETDATE()"),   # skip
+                Column(name="Status", expression="@[User::Status]"),
+                Column(name=""),                            # skip
+            ],
+        )
+        code = generator._gen_derived_column(comp)
+
+        assert "LoadId" in code
+        assert "Status" in code
+        assert 'withColumn("")' not in code
+        assert 'withColumn("", ' not in code
+
+    # --- Fix 4: expression returns must not have inline # comments ---
+
+    def test_expression_return_no_inline_comment(
+        self, generator: SparkNotebookGenerator,
+    ) -> None:
+        """Every _ssis_expr_to_pyspark return value must be safe for
+        embedding inside withColumn(...).  No # comments allowed."""
+        test_cases = [
+            "some_complex_thing",             # fallback
+            'DATEADD("wk", 1, Col)',          # unknown datepart
+            'DATEDIFF("wk", A, B)',           # unknown datepart
+            "(DT_GUID) UniqueId",             # GUID cast
+        ]
+        for expr in test_cases:
+            result = SparkNotebookGenerator._ssis_expr_to_pyspark(expr)
+            assert "#" not in result, (
+                f"Expression {expr!r} returned a value with inline comment: {result!r}"
+            )
+
+    def test_derived_column_with_fallback_expr_compiles(
+        self, generator: SparkNotebookGenerator,
+    ) -> None:
+        """When the SSIS expression hits the fallback, the generated
+        withColumn(...) line must still be syntactically valid Python."""
+        comp = _make_comp(
+            DataFlowComponentType.DERIVED_COLUMN,
+            name="der_complex",
+            columns=[
+                Column(name="Result", expression="(DT_STR,25,1252)LEFT(ProductNumber,25)"),
+            ],
+        )
+        code = generator._gen_derived_column(comp)
+
+        # Every non-comment line with withColumn must parse
+        for line in code.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if "withColumn" in stripped:
+                ast.parse(stripped, mode="exec")
+
+    # --- End-to-end: full notebook generation produces valid Python ---
+
+    def test_full_notebook_is_valid_python(
+        self, generator: SparkNotebookGenerator, tmp_path: Path,
+    ) -> None:
+        """A complete generated notebook must be parseable as Python."""
+        src = _make_comp(
+            DataFlowComponentType.OLE_DB_SOURCE,
+            name="ole_src_data",
+            connection_manager_ref="cmgr_DW",
+            sql_command="SELECT Id, Name FROM dbo.Items",
+        )
+        xform_conv = _make_comp(
+            DataFlowComponentType.DATA_CONVERSION,
+            name="dcnv_types",
+            columns=[
+                Column(name="Name", data_type="str"),
+                Column(name="", data_type="str"),   # empty – must be skipped
+            ],
+        )
+        xform_der = _make_comp(
+            DataFlowComponentType.DERIVED_COLUMN,
+            name="der_load",
+            columns=[
+                Column(name="LoadTime", expression="GETDATE()"),
+                Column(name="", expression=""),       # empty – must be skipped
+            ],
+        )
+        dest = _make_comp(
+            DataFlowComponentType.OLE_DB_DESTINATION,
+            name="ole_dst_target",
+            table_name="dbo.Items_Staging",
+            connection_manager_ref="cmgr_DW",
+        )
+        pkg, task = _build_data_flow_package(
+            sources=[src],
+            transforms=[xform_conv, xform_der],
+            destinations=[dest],
+            connection_managers=[
+                ConnectionManager(name="cmgr_DW", connection_type=ConnectionType.OLEDB),
+            ],
+        )
+        output_file = generator.generate(pkg, task, tmp_path)
+        content = output_file.read_text(encoding="utf-8")
+
+        # Must compile without SyntaxError
+        ast.parse(content, mode="exec")
+
+        # Smoke-check structural invariants
+        assert "df = df_source_ole_src_data" in content
+        assert 'withColumn("")' not in content
+        assert "_jdbc_url_for" in content

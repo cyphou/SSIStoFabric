@@ -2,7 +2,7 @@
 
 Production-ready framework for migrating SQL Server Integration Services (SSIS) packages to Microsoft Fabric using **Data Factory pipelines**, **Dataflow Gen2**, and **Spark notebooks**.
 
-> **410 tests** | **28 pipelines** | **28 notebooks** generated from the included example projects.
+> **492 tests** | **28 pipelines** | **28 notebooks** generated from the included example projects.
 
 ---
 
@@ -45,7 +45,7 @@ Production-ready framework for migrating SQL Server Integration Services (SSIS) 
 | SSIS Component | Fabric Target | Notes |
 |----------------|---------------|-------|
 | Execute SQL Task | Script Activity | Query/NonQuery auto-classified; SSIS connection ref mapped; timeout set |
-| Data Flow (OLE DB / ADO.NET) | Dataflow Gen2 | `Sql.Database()` / `Value.NativeQuery()` in M; `spark.sql()` in PySpark |
+| Data Flow (OLE DB / ADO.NET) | Dataflow Gen2 | `Sql.Database()` / `Value.NativeQuery()` in M; Fabric Connection JDBC via `notebookutils.credentials` in PySpark |
 | Data Flow (Flat File) | Dataflow Gen2 | `Csv.Document()` in M; `spark.read.csv()` in PySpark |
 | Data Flow (Excel) | Dataflow Gen2 | `Excel.Workbook()` in M; `spark.read.format("excel")` in PySpark |
 | Data Flow (ODBC) | Dataflow Gen2 | `Odbc.DataSource()` in M; `spark.read.format("jdbc")` in PySpark |
@@ -84,8 +84,8 @@ Production-ready framework for migrating SQL Server Integration Services (SSIS) 
 
 | Source/Dest Type | Dataflow (M) | Spark (PySpark) | Copy Activity |
 |------------------|-------------|-----------------|---------------|
-| OLE DB | `Sql.Database()` | `spark.sql()` | `SqlSource` / `SqlSink` |
-| ADO.NET | `Sql.Database()` | `spark.sql()` | `SqlSource` / `SqlSink` |
+| OLE DB | `Sql.Database()` | Fabric JDBC via `_jdbc_url_for()` | `SqlSource` / `SqlSink` |
+| ADO.NET | `Sql.Database()` | Fabric JDBC via `_jdbc_url_for()` | `SqlSource` / `SqlSink` |
 | Flat File | `Csv.Document()` | `spark.read.csv()` | `DelimitedTextSource` / `DelimitedTextSink` |
 | Excel | `Excel.Workbook()` | `spark.read.format("excel")` | `ExcelSource` / `DelimitedTextSink` |
 | ODBC | `Odbc.DataSource()` | `spark.read.format("jdbc")` | `OdbcSource` / `OdbcSink` |
@@ -125,8 +125,28 @@ SSIS expressions in Derived Columns, Conditional Splits, and other transforms ar
 | `ISNULL(col)` | `[col] = null` | `F.col("col").isNull()` |
 | `(DT_STR,...) col` | `Text.From([col])` | `.cast("string")` |
 | `(DT_I4) col` | `Int64.From([col])` | `.cast("int")` |
-| `cond ? a : b` | `if cond then a else b` | `F.expr("...")` |
-| `a + b` (concat) | `a & b` | — |
+| `DATEADD("dd",n,col)` | — | `F.date_add(...)` / `F.add_months(...)` |
+| `DATEDIFF("dd",a,b)` | — | `F.datediff(...)` / `F.months_between(...)` |
+| `DATEPART("yyyy",col)` | — | `F.year(...)` / `F.month(...)` / ... |
+| `YEAR/MONTH/DAY(col)` | — | `F.year(...)` / `F.month(...)` / `F.dayofmonth(...)` |
+| `REPLACENULL(col,v)` | — | `F.coalesce(...)` |
+| `NULL(DT_WSTR,n)` | — | `F.lit(None).cast("string")` |
+| `LEFT/RIGHT(col,n)` | — | `F.substring(...)` |
+| `FINDSTRING(col,s)` | — | `F.locate(...)` |
+| `TOKEN(col,d,n)` | — | `F.split(...).getItem(...)` |
+| `REVERSE(col)` | — | `F.reverse(...)` |
+| `ABS/CEILING/FLOOR(col)` | — | `F.abs(...)` / `F.ceil(...)` / `F.floor(...)` |
+| `ROUND(col,p)` | — | `F.round(...)` |
+| `POWER/SQRT/SIGN(col)` | — | `F.pow(...)` / `F.sqrt(...)` / `F.signum(...)` |
+| `(DT_R8) col` | `Number.From([col])` | `.cast("double")` |
+| `(DT_BOOL) col` | — | `.cast("boolean")` |
+| `(DT_DECIMAL,s) col` | — | `.cast("decimal(38,s)")` |
+| `(DT_NUMERIC,p,s) col` | — | `.cast("decimal(p,s)")` |
+| `(DT_CY) col` | — | `.cast("decimal(19,4)")` |
+| `(DT_GUID) col` | — | `.cast("string")` |
+| `(DT_BYTES,n) col` | — | `.cast("binary")` |
+| `cond ? a : b` | `if cond then a else b` | `F.when(...).otherwise(...)` |
+| `a + b` (concat) | `a & b` | `F.concat(...)` |
 
 Complex expressions that cannot be pattern-matched are emitted with `/* TODO */` comments.
 
@@ -362,7 +382,7 @@ output/
 ### 5. Run Tests
 
 ```bash
-# All tests (410)
+# All tests (492)
 pytest tests/ -v
 
 # API tests only
@@ -399,11 +419,11 @@ SSISToFabric/
 │   ├── config.py                       # Configuration management
 │   └── logging_config.py              # Structured logging (structlog)
 ├── tests/
-│   ├── unit/                           # 396 unit tests
+│   ├── unit/                           # 478 unit tests
 │   │   ├── test_dtsx_parser.py        # Parser tests (26 tests)
 │   │   ├── test_data_factory_generator.py  # Pipeline & folder organization tests (46 tests)
 │   │   ├── test_dataflow_generator.py # Dataflow Gen2 tests (36 tests)
-│   │   ├── test_spark_generator.py    # Notebook generation tests (9 tests)
+│   │   ├── test_spark_generator.py    # Notebook generation, transforms & code validity (91 tests)
 │   │   ├── test_migration_engine.py   # Engine routing & orchestration tests (19 tests)
 │   │   ├── test_parameters_parent_child.py  # Parameter & parent-child tests (27 tests)
 │   │   ├── test_api.py               # Python API facade tests (34 tests)
@@ -467,7 +487,7 @@ Compares actual data between SSIS-processed and Fabric-processed outputs:
 ### Running Tests
 
 ```bash
-# All tests (410)
+# All tests (492)
 pytest tests/ -v
 
 # Unit tests only

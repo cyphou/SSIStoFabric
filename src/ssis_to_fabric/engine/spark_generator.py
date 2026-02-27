@@ -271,10 +271,18 @@ class SparkNotebookGenerator:
         destinations = [c for c in task.data_flow_components if self._is_destination(c)]
 
         # Generate source reads
+        source_var_names: list[str] = []
         if sources:
             code_sections.append("# === Source Data Reads ===")
             for i, src in enumerate(sources):
+                var_name = f"df_source_{self._sanitize_name(src.name).lower()}"
+                source_var_names.append(var_name)
                 code_sections.append(self._generate_source_read(src, i))
+
+        # Bridge: assign the primary source to 'df' for transformations/writes
+        if source_var_names:
+            primary = source_var_names[0]
+            code_sections.append(f"df = {primary}")
 
         # Generate transformations
         if transforms:
@@ -391,13 +399,12 @@ class SparkNotebookGenerator:
     ) -> str:
         """Generate a JDBC read using the Fabric connection helper."""
         type_label = f" ({label})" if label else ""
-        conn_comment = f"  # Fabric Connection: {conn_name}" if conn_name else ""
         conn_arg = f'"{conn_name}"' if conn_name else '"TODO_CONNECTION_NAME"  # TODO: set connection name'
         lines = [
             f"# Source: {comp.name}{type_label}",
             f"# Uses Fabric connection (same as pipeline externalReferences)",
             f"{var_name} = spark.read.format(\"jdbc\") \\",
-            f"    .option(\"url\", _jdbc_url_for({conn_arg})){conn_comment} \\",
+            f"    .option(\"url\", _jdbc_url_for({conn_arg})) \\",
         ]
         if query:
             # Use triple-quoted string for SQL
@@ -473,9 +480,12 @@ class SparkNotebookGenerator:
 
         if comp.columns:
             for col in comp.columns:
+                if not col.name:
+                    continue  # skip columns without a name
                 ssis_expr = col.expression or ""
                 if ssis_expr:
                     pyspark_expr = self._ssis_expr_to_pyspark(ssis_expr)
+                    # Keep comment on its own line to avoid breaking withColumn() parens
                     lines.append(f'df = df.withColumn("{col.name}", {pyspark_expr})  # SSIS: {ssis_expr}')
                 else:
                     lines.append(f'df = df.withColumn("{col.name}", F.lit(None))  # TODO: Set derived expression')
@@ -630,9 +640,10 @@ class SparkNotebookGenerator:
         """Generate Data Conversion transformation code."""
         lines = [f"# Data Conversion: {comp.name}"]
         lines.append("# TODO: Cast columns to target data types")
-        for col in comp.columns:
+        named_cols = [col for col in comp.columns if col.name]
+        for col in named_cols:
             lines.append(f'# df = df.withColumn("{col.name}", df["{col.name}"].cast("{col.data_type}"))')
-        if not comp.columns:
+        if not named_cols:
             lines.append('# df = df.withColumn("column_name", df["column_name"].cast("string"))')
         return "\n".join(lines)
 
@@ -1282,7 +1293,7 @@ class SparkNotebookGenerator:
                 return f'(F.col("{col}") + F.expr("INTERVAL {n} MINUTES"))'
             if part in ("ss", "second", "s"):
                 return f'(F.col("{col}") + F.expr("INTERVAL {n} SECONDS"))'
-            return f'F.expr("date_add({col}, {n})")  # TODO: verify datepart={part}'
+            return f'F.expr("date_add({col}, {n})")'
 
         # DATEDIFF("part", start, end) → F.datediff
         m = _re.match(
@@ -1295,7 +1306,7 @@ class SparkNotebookGenerator:
                 return f'F.datediff(F.col("{end}"), F.col("{start}"))'
             if part in ("mm", "month", "m"):
                 return f'F.months_between(F.col("{end}"), F.col("{start}")).cast("int")'
-            return f'F.datediff(F.col("{end}"), F.col("{start}"))  # TODO: datepart={part}'
+            return f'F.datediff(F.col("{end}"), F.col("{start}"))'
 
         # DATEPART("part", col) → F.year / F.month / ...
         m = _re.match(
@@ -1537,7 +1548,7 @@ class SparkNotebookGenerator:
         # (DT_GUID) → string
         m = _re.match(r"^\(DT_GUID\)\s*(\w+)$", result, _re.IGNORECASE)
         if m:
-            return f'F.col("{m.group(1)}").cast("string")  # GUID → string'
+            return f'F.col("{m.group(1)}").cast("string")'
         # (DT_BYTES,len) → binary
         m = _re.match(r"^\(DT_BYTES\s*,\s*\d+\s*\)\s*(\w+)$", result, _re.IGNORECASE)
         if m:
@@ -1554,8 +1565,8 @@ class SparkNotebookGenerator:
         # || → .or. and && → .and.
         result = result.replace("||", " | ").replace("&&", " & ")
 
-        # Fallback
-        return f'F.expr("{result}")  # TODO: Review SSIS expression'
+        # Fallback – no inline comment so it can be safely embedded in withColumn()
+        return f'F.expr("{result}")'
 
     def _write_destination_manifest(
         self,
