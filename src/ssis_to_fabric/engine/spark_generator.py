@@ -138,6 +138,24 @@ class SparkNotebookGenerator:
                 notebookutils = None  # type: ignore[assignment]
         """)
 
+    def _resolve_notebook_connection_id(self, conn_ref: str, connections: list) -> str:
+        """Resolve an SSIS connection-manager reference to a Fabric connection ID.
+
+        Uses ``config.connection_mappings`` when available, otherwise emits a
+        TODO placeholder so the user can fill in the ID later.
+        """
+        if not conn_ref:
+            return ""
+        conn_name = conn_ref
+        for cm in connections:
+            if cm.id == conn_ref or cm.name == conn_ref:
+                conn_name = cm.name
+                break
+        mapped_id = self.config.connection_mappings.mappings.get(conn_name, "")
+        if mapped_id:
+            return mapped_id
+        return f"{conn_name}  -- TODO: replace with Fabric connection id"
+
     def _generate_config_section(self, package: SSISPackage) -> str:
         """Generate configuration section that reads parameters at runtime.
 
@@ -151,8 +169,9 @@ class SparkNotebookGenerator:
            standalone (e.g. during development) it falls back to the
            workspace Variable Library for shared configuration.
 
-        Connection-manager details are still emitted as constants so that
-        the developer can override them easily during local testing.
+        Connections are referenced by their Fabric connection ID, exactly
+        like in Data Factory pipelines.  At runtime the notebook fetches
+        credentials/JDBC-URL through ``notebookutils.credentials``.
         """
         lines = [
             "# --- Parameters (from pipeline or Variable Library) ---",
@@ -201,15 +220,44 @@ class SparkNotebookGenerator:
 
         lines.append("")
 
-        # Connection details (still static for now)
+        # --- Fabric Connections ---
+        # Map each SSIS connection manager to a Fabric connection ID.
+        # This mirrors Data Factory pipelines' externalReferences.connection.
+        lines.append("# --- Fabric Connections ---")
+        lines.append("# Map SSIS connection managers to Fabric connection IDs.")
+        lines.append("# Update the IDs below to match your Fabric workspace connections.")
+        lines.append("# (same IDs used by Data Factory pipeline externalReferences)")
+        lines.append("_FABRIC_CONNECTIONS = {")
         for cm in package.connection_managers:
-            safe_name = self._sanitize_name(cm.name).upper()
-            lines.append(f"# Connection: {cm.name} ({cm.connection_type.value})")
+            conn_id = self._resolve_notebook_connection_id(cm.name, package.connection_managers)
+            comment_parts = [cm.connection_type.value]
             if cm.server:
-                lines.append(f'{safe_name}_SERVER = "{cm.server}"')
+                comment_parts.append(cm.server)
             if cm.database:
-                lines.append(f'{safe_name}_DATABASE = "{cm.database}"')
-            lines.append("")
+                comment_parts.append(cm.database)
+            comment = " / ".join(comment_parts)
+            lines.append(f'    "{cm.name}": "{conn_id}",  # {comment}')
+        lines.append("}")
+        lines.append("")
+
+        # Helper functions
+        lines.append("")
+        lines.append("def _get_connection_id(conn_name: str) -> str:")
+        lines.append('    """Get a Fabric connection ID for an SSIS connection manager."""')
+        lines.append('    conn_id = _FABRIC_CONNECTIONS.get(conn_name, "")')
+        lines.append('    if not conn_id or "TODO" in conn_id:')
+        lines.append('        raise ValueError(')
+        lines.append('            f"Fabric connection not configured for: {conn_name}. "')
+        lines.append('            f"Update _FABRIC_CONNECTIONS dict with the Fabric connection ID."')
+        lines.append('        )')
+        lines.append('    return conn_id')
+        lines.append("")
+        lines.append("")
+        lines.append("def _jdbc_url_for(conn_name: str) -> str:")
+        lines.append('    """Get JDBC connection string from a Fabric connection."""')
+        lines.append('    conn_id = _get_connection_id(conn_name)')
+        lines.append('    return notebookutils.credentials.getConnectionStringOrCreds(conn_id)')
+        lines.append("")
 
         return "\n".join(lines)
 
@@ -243,8 +291,16 @@ class SparkNotebookGenerator:
         return code_sections
 
     def _generate_source_read(self, comp: DataFlowComponent, index: int) -> str:
-        """Generate PySpark code to read from a source."""
+        """Generate PySpark code to read from a source.
+
+        For database sources (OLE DB, ADO.NET, ODBC) the generated code
+        uses the Fabric connection pattern: the ``_jdbc_url_for()`` helper
+        fetches the JDBC URL from the Fabric connection at runtime via
+        ``notebookutils.credentials``, exactly like pipelines reference
+        ``externalReferences.connection``.
+        """
         var_name = f"df_source_{self._sanitize_name(comp.name).lower()}"
+        conn_name = comp.connection_manager_ref or ""
 
         # --- Flat File → spark.read.csv ---
         if comp.component_type == DataFlowComponentType.FLAT_FILE_SOURCE:
@@ -298,71 +354,59 @@ class SparkNotebookGenerator:
         # --- CDC Source ---
         if comp.component_type == DataFlowComponentType.CDC_SOURCE:
             if comp.sql_command:
-                return dedent(f'''\
-                    # Source: {comp.name} (CDC)
-                    # TODO: Configure CDC state tracking (__$start_lsn / __$operation)
-                    {var_name} = spark.sql("""
-                    {comp.sql_command}
-                    """)
-                    logger.info(f"Read {{count}} CDC rows", count={var_name}.count())
-                ''')
+                return self._gen_jdbc_source_read(comp, var_name, conn_name, query=comp.sql_command, label="CDC")
             table = comp.table_name or "TODO_TABLE"
             cdc_table = f"cdc.{table}_CT" if not table.startswith("cdc.") else table
-            return dedent(f"""\
-                # Source: {comp.name} (CDC)
-                # TODO: Filter by __$operation for net changes (1=delete, 2=insert, 4=update)
-                {var_name} = spark.sql("SELECT * FROM {cdc_table}")
-                logger.info(f"Read {{count}} CDC rows", count={var_name}.count())
-            """)
+            return self._gen_jdbc_source_read(comp, var_name, conn_name, table=cdc_table, label="CDC")
 
-        # --- ODBC Source → JDBC read ---
+        # --- ODBC Source → Fabric Connection ---
         if comp.component_type == DataFlowComponentType.ODBC_SOURCE:
             if comp.sql_command:
-                return dedent(f'''\
-                    # Source: {comp.name} (ODBC → JDBC)
-                    # TODO: Update the JDBC URL for your environment
-                    {var_name} = spark.read.format("jdbc") \\
-                        .option("url", "jdbc:TODO_DRIVER://TODO_HOST:TODO_PORT/TODO_DB") \\
-                        .option("query", """{comp.sql_command}""") \\
-                        .option("driver", "TODO_JDBC_DRIVER") \\
-                        .load()
-                    logger.info(f"Read {{count}} rows via JDBC", count={var_name}.count())
-                ''')
+                return self._gen_jdbc_source_read(comp, var_name, conn_name, query=comp.sql_command, label="ODBC")
             table = comp.table_name or "TODO_TABLE"
-            return dedent(f'''\
-                # Source: {comp.name} (ODBC → JDBC)
-                # TODO: Update the JDBC URL for your environment
-                {var_name} = spark.read.format("jdbc") \\
-                    .option("url", "jdbc:TODO_DRIVER://TODO_HOST:TODO_PORT/TODO_DB") \\
-                    .option("dbtable", "{table}") \\
-                    .option("driver", "TODO_JDBC_DRIVER") \\
-                    .load()
-                logger.info(f"Read {{count}} rows via JDBC", count={var_name}.count())
-            ''')
+            return self._gen_jdbc_source_read(comp, var_name, conn_name, table=table, label="ODBC")
 
-        # --- OLE DB / ADO.NET (SQL) ---
+        # --- OLE DB / ADO.NET → Fabric Connection ---
         if comp.sql_command:
-            return dedent(f'''\
-                # Source: {comp.name}
-                # TODO: Update the JDBC connection string for your Fabric environment
-                {var_name} = spark.sql("""
-                {comp.sql_command}
-                """)
-                logger.info(f"Read {{count}} rows from {comp.name}", count={var_name}.count())
-            ''')
+            return self._gen_jdbc_source_read(comp, var_name, conn_name, query=comp.sql_command)
 
         if comp.table_name:
-            return dedent(f"""\
-                # Source: {comp.name} -> Table: {comp.table_name}
-                {var_name} = spark.sql("SELECT * FROM {comp.table_name}")
-                logger.info(f"Read from {comp.table_name}")
-            """)
+            return self._gen_jdbc_source_read(comp, var_name, conn_name, table=comp.table_name)
 
         return dedent(f"""\
             # Source: {comp.name}
             # TODO: Configure source data read
             {var_name} = spark.sql("SELECT 1 as placeholder -- TODO: Replace with actual query")
         """)
+
+    def _gen_jdbc_source_read(
+        self,
+        comp: DataFlowComponent,
+        var_name: str,
+        conn_name: str,
+        *,
+        query: str = "",
+        table: str = "",
+        label: str = "",
+    ) -> str:
+        """Generate a JDBC read using the Fabric connection helper."""
+        type_label = f" ({label})" if label else ""
+        conn_comment = f"  # Fabric Connection: {conn_name}" if conn_name else ""
+        conn_arg = f'"{conn_name}"' if conn_name else '"TODO_CONNECTION_NAME"  # TODO: set connection name'
+        lines = [
+            f"# Source: {comp.name}{type_label}",
+            f"# Uses Fabric connection (same as pipeline externalReferences)",
+            f"{var_name} = spark.read.format(\"jdbc\") \\",
+            f"    .option(\"url\", _jdbc_url_for({conn_arg})){conn_comment} \\",
+        ]
+        if query:
+            # Use triple-quoted string for SQL
+            lines.append(f'    .option("query", """{query}""") \\')
+        elif table:
+            lines.append(f'    .option("dbtable", "{table}") \\')
+        lines.append("    .load()")
+        lines.append(f'logger.info(f"Read {{{{count}}}} rows from {comp.name}", count={var_name}.count())')
+        return "\n".join(lines)
 
     def _generate_transformation(self, comp: DataFlowComponent) -> str:
         """Generate PySpark code for a transformation component."""
@@ -438,12 +482,6 @@ class SparkNotebookGenerator:
         else:
             lines.append('df = df.withColumn("new_column", F.lit(None))  # TODO: Add derived column logic')
         return "\n".join(lines)
-
-    @staticmethod
-    def _resolve_conn_var(name: str) -> str:
-        """Turn an SSIS connection manager name into a Python variable prefix."""
-        import re
-        return re.sub(r'[^a-zA-Z0-9_]', '_', name).strip('_').upper()
 
     def _gen_conditional_split(self, comp: DataFlowComponent) -> str:
         """Generate Conditional Split transformation code."""
@@ -956,12 +994,11 @@ class SparkNotebookGenerator:
     ) -> str:
         """Generate PySpark code to write to a destination.
 
-        The write strategy mirrors the SSIS connection type:
-        - OLE DB / ADO.NET → JDBC write using the connection's server/database
+        The write strategy mirrors the SSIS connection type and uses
+        Fabric connections (same as pipeline externalReferences):
+        - OLE DB / ADO.NET / SQL Server / ODBC → JDBC via ``_jdbc_url_for()``
         - Flat File → CSV write
-        - ODBC → JDBC write
-        - SQL Server (fast load) → JDBC write
-        - Others → generic delta/saveAsTable with TODO
+        - Others → generic delta/saveAsTable
         """
         table = comp.table_name or comp.properties.get("OpenRowset", "target_table")
         safe_table = self._sanitize_name(table) if table else "target_table"
@@ -991,59 +1028,54 @@ class SparkNotebookGenerator:
                 logger.info("Data written to {file_path}")
             ''')
 
-        # --- OLE DB / ADO.NET / SQL Server Destination → JDBC ---
+        # --- OLE DB / ADO.NET → Fabric Connection (JDBC) ---
         if conn and conn.connection_type.value in ("OLEDB", "ADO.NET"):
-            prefix = self._resolve_conn_var(conn.name)
-            srv_var = f"{prefix}_SERVER"
-            db_var = f"{prefix}_DATABASE"
+            conn_name = conn.name
             lines = [
                 f"# Destination: {comp.name} -> Table: {table}",
-                f"# Connection: {conn.name} ({conn.connection_type.value})",
-                f'_jdbc_url = f"jdbc:sqlserver://{{{srv_var}}};databaseName={{{db_var}}}"',
+                f"# Connection: {conn_name} ({conn.connection_type.value} → Fabric Connection)",
                 "df.write \\",
                 '    .mode("append") \\',
                 '    .format("jdbc") \\',
-                '    .option("url", _jdbc_url) \\',
+                f'    .option("url", _jdbc_url_for("{conn_name}")) \\',
                 f'    .option("dbtable", "{table}") \\',
-                '    .option("driver", "com.microsoft.sqlserver.jdbc.SQLServerDriver") \\',
                 "    .save()",
-                f'logger.info("Data written to {table} via JDBC")',
+                f'logger.info("Data written to {table} via Fabric connection")',
             ]
             return "\n".join(lines)
 
+        # --- SQL Server Destination → Fabric Connection (JDBC fast load) ---
         if comp.component_type == DataFlowComponentType.SQL_SERVER_DESTINATION:
-            prefix = self._resolve_conn_var(conn.name) if conn else "DEST"
-            srv_var = f"{prefix}_SERVER"
-            db_var = f"{prefix}_DATABASE"
+            conn_name = conn.name if conn else "TODO_CONNECTION_NAME"
             lines = [
                 f"# Destination: {comp.name} -> Table: {table} (SQL Server fast load)",
-                f'_jdbc_url = f"jdbc:sqlserver://{{{srv_var}}};databaseName={{{db_var}}}"',
+                f"# Connection: {conn_name} → Fabric Connection",
                 "df.write \\",
                 '    .mode("append") \\',
                 '    .format("jdbc") \\',
-                '    .option("url", _jdbc_url) \\',
+                f'    .option("url", _jdbc_url_for("{conn_name}")) \\',
                 f'    .option("dbtable", "{table}") \\',
-                '    .option("driver", "com.microsoft.sqlserver.jdbc.SQLServerDriver") \\',
                 '    .option("batchsize", "10000") \\',
                 "    .save()",
-                f'logger.info("Data written to {table} via JDBC (fast load)")',
+                f'logger.info("Data written to {table} via Fabric connection (fast load)")',
             ]
             return "\n".join(lines)
 
-        # --- ODBC Destination → JDBC ---
+        # --- ODBC Destination → Fabric Connection (JDBC) ---
         if comp.component_type == DataFlowComponentType.ODBC_DESTINATION:
-            return dedent(f'''\
-                # Destination: {comp.name} -> Table: {table} (ODBC → JDBC)
-                # TODO: Update the JDBC URL for your environment
-                df.write \\
-                    .mode("append") \\
-                    .format("jdbc") \\
-                    .option("url", "jdbc:TODO_DRIVER://TODO_HOST:TODO_PORT/TODO_DB") \\
-                    .option("dbtable", "{table}") \\
-                    .option("driver", "TODO_JDBC_DRIVER") \\
-                    .save()
-                logger.info("Data written to {table} via JDBC")
-            ''')
+            conn_name = conn.name if conn else "TODO_CONNECTION_NAME"
+            lines = [
+                f"# Destination: {comp.name} -> Table: {table} (ODBC → Fabric Connection)",
+                f"# Connection: {conn_name}",
+                "df.write \\",
+                '    .mode("append") \\',
+                '    .format("jdbc") \\',
+                f'    .option("url", _jdbc_url_for("{conn_name}")) \\',
+                f'    .option("dbtable", "{table}") \\',
+                "    .save()",
+                f'logger.info("Data written to {table} via Fabric connection")',
+            ]
+            return "\n".join(lines)
 
         # --- Default: delta / saveAsTable (Fabric Lakehouse) ---
         return dedent(f'''\
