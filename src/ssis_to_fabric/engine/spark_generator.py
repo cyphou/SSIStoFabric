@@ -394,6 +394,32 @@ class SparkNotebookGenerator:
             return self._gen_row_count(comp)
         elif comp.component_type == DataFlowComponentType.OLE_DB_COMMAND:
             return self._gen_oledb_command(comp)
+        elif comp.component_type == DataFlowComponentType.SLOWLY_CHANGING_DIMENSION:
+            return self._gen_scd(comp)
+        elif comp.component_type == DataFlowComponentType.FUZZY_LOOKUP:
+            return self._gen_fuzzy_lookup(comp)
+        elif comp.component_type == DataFlowComponentType.FUZZY_GROUPING:
+            return self._gen_fuzzy_grouping(comp)
+        elif comp.component_type == DataFlowComponentType.TERM_LOOKUP:
+            return self._gen_term_lookup(comp)
+        elif comp.component_type == DataFlowComponentType.COPY_COLUMN:
+            return self._gen_copy_column(comp)
+        elif comp.component_type == DataFlowComponentType.CHARACTER_MAP:
+            return self._gen_character_map(comp)
+        elif comp.component_type == DataFlowComponentType.AUDIT:
+            return self._gen_audit(comp)
+        elif comp.component_type == DataFlowComponentType.MERGE:
+            return self._gen_merge(comp)
+        elif comp.component_type == DataFlowComponentType.CDC_SPLITTER:
+            return self._gen_cdc_splitter(comp)
+        elif comp.component_type == DataFlowComponentType.PERCENTAGE_SAMPLING:
+            return self._gen_percentage_sampling(comp)
+        elif comp.component_type == DataFlowComponentType.ROW_SAMPLING:
+            return self._gen_row_sampling(comp)
+        elif comp.component_type == DataFlowComponentType.BALANCED_DATA_DISTRIBUTOR:
+            return self._gen_balanced_data_distributor(comp)
+        elif comp.component_type == DataFlowComponentType.CACHE_TRANSFORM:
+            return self._gen_cache_transform(comp)
         else:
             return self._gen_unknown_transform(comp)
 
@@ -638,6 +664,284 @@ class SparkNotebookGenerator:
             spark.sql("""
                 {sql}
             """)
+        ''')
+
+    # -----------------------------------------------------------------
+    # Slowly Changing Dimension (SCD)
+    # -----------------------------------------------------------------
+    def _gen_scd(self, comp: DataFlowComponent) -> str:
+        table = comp.table_name or comp.properties.get("OpenRowset", "dim_table")
+        safe_table = self._sanitize_name(table)
+        bk_cols = comp.properties.get("_business_keys", [])
+        scd1_cols = comp.properties.get("_scd1_columns", [])
+        scd2_cols = comp.properties.get("_scd2_columns", [])
+
+        bk_str = ", ".join(f'"{c}"' for c in bk_cols) if bk_cols else '"business_key"  # TODO: set BK column(s)'
+        lines = [
+            f"# Slowly Changing Dimension: {comp.name}",
+            f"# Target table: {table}",
+            f'df_existing = spark.read.format("delta").table("{safe_table}")',
+            "",
+            "# Join incoming rows to existing dimension on business key(s)",
+            f"df_merged = df.alias(\"src\").join(",
+            f'    df_existing.alias("tgt"),',
+            f"    on=[{bk_str}],",
+            '    how="full"',
+            ")",
+        ]
+
+        if scd1_cols:
+            cols_str = ", ".join(f'"{c}"' for c in scd1_cols)
+            lines += [
+                "",
+                f"# --- Type 1 (overwrite) columns: {cols_str}",
+                "# When matched and values differ → update in place",
+            ]
+            for c in scd1_cols:
+                lines.append(f'df_merged = df_merged.withColumn("{c}", F.coalesce(F.col("src.{c}"), F.col("tgt.{c}")))')
+
+        if scd2_cols:
+            cols_str = ", ".join(f'"{c}"' for c in scd2_cols)
+            lines += [
+                "",
+                f"# --- Type 2 (history) columns: {cols_str}",
+                "# When matched and values differ → expire old row, insert new",
+                '# TODO: Implement SCD2 logic: set EndDate on old row, insert new row with StartDate',
+                'df_merged = df_merged.withColumn("_scd2_changed", F.lit(False))  # TODO: detect changes',
+            ]
+            for c in scd2_cols:
+                lines.append(f'df_merged = df_merged.withColumn("_scd2_changed", df_merged["_scd2_changed"] | (F.col("src.{c}") != F.col("tgt.{c}")))')
+            lines += [
+                'df_merged = df_merged.withColumn("EffectiveDate", F.when(F.col("_scd2_changed"), F.current_timestamp()).otherwise(F.col("tgt.EffectiveDate")))',
+                'df_merged = df_merged.withColumn("ExpirationDate", F.when(F.col("_scd2_changed"), F.lit(None)).otherwise(F.col("tgt.ExpirationDate")))',
+                'df_merged = df_merged.withColumn("IsCurrent", F.when(F.col("_scd2_changed"), F.lit(True)).otherwise(F.col("tgt.IsCurrent")))',
+                'df_merged = df_merged.drop("_scd2_changed")',
+            ]
+
+        lines += [
+            "",
+            "# Write back to dimension table",
+            "df_merged.write.format(\"delta\").mode(\"overwrite\").option(\"overwriteSchema\", \"true\") \\",
+            f'    .saveAsTable("{safe_table}")',
+            f'logger.info("SCD merge completed for {safe_table}")',
+        ]
+        return "\n".join(lines)
+
+    # -----------------------------------------------------------------
+    # Fuzzy Lookup
+    # -----------------------------------------------------------------
+    def _gen_fuzzy_lookup(self, comp: DataFlowComponent) -> str:
+        ref_table = comp.table_name or comp.properties.get("OpenRowset", "reference_table")
+        similarity = comp.properties.get("MinSimilarity", "0.5")
+        return dedent(f'''\
+            # Fuzzy Lookup: {comp.name}
+            # Reference table: {ref_table}
+            # IMPORTANT: PySpark has no built-in fuzzy join.
+            # Options:
+            #   1. Use Soundex / Levenshtein for approximate matching
+            #   2. Use a dedicated library (e.g. spark-fuzzy-matching)
+            df_ref = spark.read.format("delta").table("{ref_table}")
+
+            # Example using Levenshtein distance (edit distance ≤ threshold)
+            _match_col = "match_column"  # TODO: Set the column to fuzzy-match on
+            _threshold = 3  # TODO: Adjust threshold (original similarity: {similarity})
+            df = df.alias("src").crossJoin(df_ref.alias("ref")).filter(
+                F.levenshtein(F.col("src." + _match_col), F.col("ref." + _match_col)) <= _threshold
+            )
+            logger.info("Fuzzy lookup completed for {comp.name}")
+        ''')
+
+    # -----------------------------------------------------------------
+    # Fuzzy Grouping
+    # -----------------------------------------------------------------
+    def _gen_fuzzy_grouping(self, comp: DataFlowComponent) -> str:
+        similarity = comp.properties.get("MinSimilarity", "0.5")
+        return dedent(f'''\
+            # Fuzzy Grouping: {comp.name}
+            # Groups similar rows together (de-duplication).
+            # PySpark has no built-in fuzzy grouping.  Approach:
+            #   1. Use Soundex to create a grouping key
+            #   2. Use Levenshtein within each group to pick canonical value
+            _group_col = "group_column"  # TODO: Set the column to group on
+            df = df.withColumn("_fuzzy_key", F.soundex(F.col(_group_col)))
+            # Within each soundex group, keep the first (canonical) row
+            from pyspark.sql.window import Window as _W
+            _w = _W.partitionBy("_fuzzy_key").orderBy(F.col(_group_col))
+            df = df.withColumn("_group_id", F.dense_rank().over(_w))
+            df = df.withColumn("_canonical", F.first(F.col(_group_col)).over(_w.rowsBetween(Window.unboundedPreceding, Window.unboundedFollowing)))
+            logger.info("Fuzzy grouping completed for {comp.name} (similarity >= {similarity})")
+        ''')
+
+    # -----------------------------------------------------------------
+    # Term Lookup
+    # -----------------------------------------------------------------
+    def _gen_term_lookup(self, comp: DataFlowComponent) -> str:
+        ref_table = comp.table_name or "term_reference_table"
+        return dedent(f'''\
+            # Term Lookup: {comp.name}
+            # Looks up terms/phrases from a reference table and scores matches.
+            df_terms = spark.read.format("delta").table("{ref_table}")  # TODO: verify reference table
+            _input_col = "text_column"  # TODO: Set the text column to scan
+            _term_col = "Term"  # Column in reference table containing terms
+
+            # Cross-join and check if term appears in the text
+            df = df.alias("src").crossJoin(df_terms.alias("terms")).filter(
+                F.col("src." + _input_col).contains(F.col("terms." + _term_col))
+            )
+            logger.info("Term lookup completed for {comp.name}")
+        ''')
+
+    # -----------------------------------------------------------------
+    # Copy Column
+    # -----------------------------------------------------------------
+    def _gen_copy_column(self, comp: DataFlowComponent) -> str:
+        lines = [f"# Copy Column: {comp.name}"]
+        if comp.columns:
+            for col in comp.columns:
+                src = col.source_column or col.name
+                dst = col.name if col.source_column else f"{col.name}_copy"
+                lines.append(f'df = df.withColumn("{dst}", F.col("{src}"))')
+        else:
+            lines.append('# TODO: Specify columns to copy')
+            lines.append('# df = df.withColumn("col_copy", F.col("col"))')
+        return "\n".join(lines)
+
+    # -----------------------------------------------------------------
+    # Character Map
+    # -----------------------------------------------------------------
+    def _gen_character_map(self, comp: DataFlowComponent) -> str:
+        lines = [f"# Character Map: {comp.name}"]
+        if comp.columns:
+            for col in comp.columns:
+                op = (col.expression or "uppercase").lower()
+                if "upper" in op:
+                    lines.append(f'df = df.withColumn("{col.name}", F.upper(F.col("{col.name}")))')
+                elif "lower" in op:
+                    lines.append(f'df = df.withColumn("{col.name}", F.lower(F.col("{col.name}")))')
+                elif "fullwidth" in op or "halfwidth" in op:
+                    lines.append(f'# df = df.withColumn("{col.name}", ...)  # TODO: fullwidth/halfwidth conversion')
+                elif "linguistic" in op or "kana" in op or "katakana" in op or "hiragana" in op:
+                    lines.append(f'# df = df.withColumn("{col.name}", ...)  # TODO: linguistic casing / kana conversion')
+                else:
+                    lines.append(f'df = df.withColumn("{col.name}", F.upper(F.col("{col.name}")))  # TODO: verify mapping type ({op})')
+        else:
+            lines.append('# TODO: Specify character mapping operations')
+            lines.append('# df = df.withColumn("col", F.upper(F.col("col")))')
+        return "\n".join(lines)
+
+    # -----------------------------------------------------------------
+    # Audit
+    # -----------------------------------------------------------------
+    def _gen_audit(self, comp: DataFlowComponent) -> str:
+        lines = [
+            f"# Audit: {comp.name}",
+            "# Adds audit columns to the data flow (execution metadata)",
+        ]
+        audit_cols = {
+            "ExecutionInstanceGUID": 'F.lit(spark.conf.get("spark.app.id", "unknown"))',
+            "PackageID": 'F.lit("pkg_id")  # TODO: Set actual package ID',
+            "PackageName": f'F.lit("{comp.properties.get("_package_name", "unknown")}")',
+            "VersionID": 'F.lit("1.0")',
+            "ExecutionStartTime": "F.current_timestamp()",
+            "MachineName": 'F.lit(spark.conf.get("spark.driver.host", "unknown"))',
+            "UserName": 'F.lit("fabric_user")',
+            "TaskName": f'F.lit("{comp.name}")',
+            "TaskID": f'F.lit("{comp.id}")',
+        }
+        if comp.columns:
+            for col in comp.columns:
+                expr = audit_cols.get(col.name, f'F.lit("{col.name}")  # TODO: map audit column')
+                lines.append(f'df = df.withColumn("{col.name}", {expr})')
+        else:
+            # Add all standard audit columns
+            lines.append('df = df.withColumn("AuditExecutionId", F.lit(spark.conf.get("spark.app.id", "unknown")))')
+            lines.append('df = df.withColumn("AuditTimestamp", F.current_timestamp())')
+            lines.append('df = df.withColumn("AuditTaskName", F.lit("' + comp.name + '"))')
+        return "\n".join(lines)
+
+    # -----------------------------------------------------------------
+    # Merge (sorted merge of two inputs)
+    # -----------------------------------------------------------------
+    def _gen_merge(self, comp: DataFlowComponent) -> str:
+        sort_col = comp.properties.get("_sort_key", "sort_key")
+        return dedent(f'''\
+            # Merge: {comp.name}
+            # Merges two pre-sorted inputs into a single sorted output.
+            # In Spark, use unionByName followed by orderBy.
+            df = df_input_1.unionByName(df_input_2, allowMissingColumns=True) \\
+                .orderBy(F.col("{sort_col}"))  # TODO: verify sort column(s)
+            logger.info("Merge completed for {comp.name}")
+        ''')
+
+    # -----------------------------------------------------------------
+    # CDC Splitter
+    # -----------------------------------------------------------------
+    def _gen_cdc_splitter(self, comp: DataFlowComponent) -> str:
+        return dedent(f'''\
+            # CDC Splitter: {comp.name}
+            # Splits CDC rows by operation type (__$operation column).
+            #   1 = Delete, 2 = Insert, 3 = Update (before), 4 = Update (after)
+            df_inserts = df.filter(F.col("__$operation") == 2)
+            df_updates = df.filter(F.col("__$operation") == 4)
+            df_deletes = df.filter(F.col("__$operation") == 1)
+            logger.info(f"CDC split: {{df_inserts.count()}} inserts, {{df_updates.count()}} updates, {{df_deletes.count()}} deletes")
+        ''')
+
+    # -----------------------------------------------------------------
+    # Percentage Sampling
+    # -----------------------------------------------------------------
+    def _gen_percentage_sampling(self, comp: DataFlowComponent) -> str:
+        pct = comp.properties.get("SamplingValue", "10")
+        seed = comp.properties.get("SamplingSeed", "42")
+        return dedent(f'''\
+            # Percentage Sampling: {comp.name}
+            # Sample {pct}% of rows
+            df_sampled = df.sample(fraction={int(pct) / 100}, seed={seed})
+            df_unselected = df.subtract(df_sampled)  # Rows not in sample
+            df = df_sampled
+            logger.info(f"Sampled {{df.count()}} rows ({pct}%)")
+        ''')
+
+    # -----------------------------------------------------------------
+    # Row Sampling
+    # -----------------------------------------------------------------
+    def _gen_row_sampling(self, comp: DataFlowComponent) -> str:
+        count = comp.properties.get("SamplingValue", "1000")
+        seed = comp.properties.get("SamplingSeed", "42")
+        return dedent(f'''\
+            # Row Sampling: {comp.name}
+            # Sample exactly {count} rows
+            _total = df.count()
+            _fraction = min(1.0, {count} / max(_total, 1))
+            df_sampled = df.sample(fraction=_fraction, seed={seed}).limit({count})
+            df_unselected = df.subtract(df_sampled)
+            df = df_sampled
+            logger.info(f"Sampled {{df.count()}} rows (target: {count})")
+        ''')
+
+    # -----------------------------------------------------------------
+    # Balanced Data Distributor
+    # -----------------------------------------------------------------
+    def _gen_balanced_data_distributor(self, comp: DataFlowComponent) -> str:
+        return dedent(f'''\
+            # Balanced Data Distributor: {comp.name}
+            # In SSIS this distributes rows across multiple threads.
+            # Spark handles parallelism natively via partitions.
+            df = df.repartition({comp.properties.get("_partitions", 8)})  # Redistribute across partitions
+            logger.info("Data repartitioned for parallel processing")
+        ''')
+
+    # -----------------------------------------------------------------
+    # Cache Transform
+    # -----------------------------------------------------------------
+    def _gen_cache_transform(self, comp: DataFlowComponent) -> str:
+        return dedent(f'''\
+            # Cache Transform: {comp.name}
+            # In SSIS, this writes data to a Cache connection manager for use by Lookup.
+            # In Spark, persist the DataFrame in memory for reuse.
+            df.cache()
+            df.count()  # Force materialization
+            logger.info("DataFrame cached for {comp.name}")
         ''')
 
     def _gen_unknown_transform(self, comp: DataFlowComponent) -> str:
@@ -926,46 +1230,298 @@ class SparkNotebookGenerator:
 
         # GETDATE() → F.current_timestamp()
         result = _re.sub(r"\bGETDATE\s*\(\s*\)", "F.current_timestamp()", result, flags=_re.IGNORECASE)
+
+        # DATEADD("part", num, col) → F.date_add / F.add_months
+        m = _re.match(
+            r'^DATEADD\s*\(\s*"?(\w+)"?\s*,\s*(-?\d+)\s*,\s*(\w+)\s*\)$',
+            result, _re.IGNORECASE,
+        )
+        if m:
+            part, n, col = m.group(1).lower(), m.group(2), m.group(3)
+            if part in ("dd", "day", "d"):
+                return f'F.date_add(F.col("{col}"), {n})'
+            if part in ("mm", "month", "m"):
+                return f'F.add_months(F.col("{col}"), {n})'
+            if part in ("yyyy", "year", "yy"):
+                return f'F.add_months(F.col("{col}"), {n} * 12)'
+            if part in ("hh", "hour"):
+                return f'(F.col("{col}") + F.expr("INTERVAL {n} HOURS"))'
+            if part in ("mi", "minute", "n"):
+                return f'(F.col("{col}") + F.expr("INTERVAL {n} MINUTES"))'
+            if part in ("ss", "second", "s"):
+                return f'(F.col("{col}") + F.expr("INTERVAL {n} SECONDS"))'
+            return f'F.expr("date_add({col}, {n})")  # TODO: verify datepart={part}'
+
+        # DATEDIFF("part", start, end) → F.datediff
+        m = _re.match(
+            r'^DATEDIFF\s*\(\s*"?(\w+)"?\s*,\s*(\w+)\s*,\s*(\w+)\s*\)$',
+            result, _re.IGNORECASE,
+        )
+        if m:
+            part, start, end = m.group(1).lower(), m.group(2), m.group(3)
+            if part in ("dd", "day", "d"):
+                return f'F.datediff(F.col("{end}"), F.col("{start}"))'
+            if part in ("mm", "month", "m"):
+                return f'F.months_between(F.col("{end}"), F.col("{start}")).cast("int")'
+            return f'F.datediff(F.col("{end}"), F.col("{start}"))  # TODO: datepart={part}'
+
+        # DATEPART("part", col) → F.year / F.month / ...
+        m = _re.match(
+            r'^DATEPART\s*\(\s*"?(\w+)"?\s*,\s*(\w+)\s*\)$',
+            result, _re.IGNORECASE,
+        )
+        if m:
+            part, col = m.group(1).lower(), m.group(2)
+            func_map = {
+                "yyyy": "year", "year": "year", "yy": "year",
+                "mm": "month", "month": "month", "m": "month",
+                "dd": "dayofmonth", "day": "dayofmonth", "d": "dayofmonth",
+                "hh": "hour", "hour": "hour",
+                "mi": "minute", "minute": "minute", "n": "minute",
+                "ss": "second", "second": "second", "s": "second",
+                "dw": "dayofweek", "weekday": "dayofweek",
+                "dy": "dayofyear",
+                "wk": "weekofyear", "week": "weekofyear",
+                "qq": "quarter", "quarter": "quarter",
+            }
+            spark_func = func_map.get(part, "dayofmonth")
+            return f'F.{spark_func}(F.col("{col}"))'
+
+        # YEAR(col) / MONTH(col) / DAY(col)
+        m = _re.match(r"^(YEAR|MONTH|DAY)\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
+        if m:
+            func_map = {"YEAR": "year", "MONTH": "month", "DAY": "dayofmonth"}
+            return f'F.{func_map[m.group(1).upper()]}(F.col("{m.group(2)}"))'
+
         # ISNULL(col) → F.col("col").isNull()
         m = _re.match(r"^ISNULL\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
         if m:
             return f'F.col("{m.group(1)}").isNull()'
+
+        # REPLACENULL(col, replacement) → F.coalesce
+        m = _re.match(
+            r'^REPLACENULL\s*\(\s*(\w+)\s*,\s*(.+?)\s*\)$',
+            result, _re.IGNORECASE,
+        )
+        if m:
+            col, replacement = m.group(1), m.group(2).strip()
+            if replacement.startswith('"') and replacement.endswith('"'):
+                return f'F.coalesce(F.col("{col}"), F.lit({replacement}))'
+            return f'F.coalesce(F.col("{col}"), F.lit({replacement}))'
+
+        # NULL(DT_WSTR, len) → F.lit(None).cast("string")
+        m = _re.match(r"^NULL\s*\(\s*DT_WSTR\s*,\s*\d+\s*\)$", result, _re.IGNORECASE)
+        if m:
+            return 'F.lit(None).cast("string")'
+        m = _re.match(r"^NULL\s*\(\s*DT_I4\s*\)$", result, _re.IGNORECASE)
+        if m:
+            return 'F.lit(None).cast("int")'
+        m = _re.match(r"^NULL\s*\(\s*DT_(?:R8|FLOAT)\s*\)$", result, _re.IGNORECASE)
+        if m:
+            return 'F.lit(None).cast("double")'
+        m = _re.match(r"^NULL\s*\(\s*DT_(?:DATE|DBTIMESTAMP)\s*\)$", result, _re.IGNORECASE)
+        if m:
+            return 'F.lit(None).cast("timestamp")'
+
         # UPPER(col) / LOWER(col)
         m = _re.match(r"^(UPPER|LOWER)\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
         if m:
             func = "upper" if m.group(1).upper() == "UPPER" else "lower"
             return f'F.{func}(F.col("{m.group(2)}"))'
-        # TRIM(col)
-        m = _re.match(r"^TRIM\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
+
+        # LTRIM / RTRIM / TRIM
+        m = _re.match(r"^(LTRIM|RTRIM|TRIM)\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
         if m:
-            return f'F.trim(F.col("{m.group(1)}"))'
+            func_map = {"LTRIM": "ltrim", "RTRIM": "rtrim", "TRIM": "trim"}
+            return f'F.{func_map[m.group(1).upper()]}(F.col("{m.group(2)}"))'
+
         # LEN(col)
         m = _re.match(r"^LEN\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
         if m:
             return f'F.length(F.col("{m.group(1)}"))'
+
+        # RIGHT(col, n) / LEFT(col, n)
+        m = _re.match(r"^(RIGHT|LEFT)\s*\(\s*(\w+)\s*,\s*(\d+)\s*\)$", result, _re.IGNORECASE)
+        if m:
+            func_name = m.group(1).upper()
+            col, n = m.group(2), m.group(3)
+            if func_name == "LEFT":
+                return f'F.substring(F.col("{col}"), 1, {n})'
+            return f'F.substring(F.col("{col}"), F.length(F.col("{col}")) - {n} + 1, {n})'
+
+        # FINDSTRING(col, search, occurrence) → F.locate
+        m = _re.match(
+            r'^FINDSTRING\s*\(\s*(\w+)\s*,\s*"([^"]*)"\s*(?:,\s*(\d+))?\s*\)$',
+            result, _re.IGNORECASE,
+        )
+        if m:
+            col, search = m.group(1), m.group(2)
+            return f'F.locate("{search}", F.col("{col}"))'
+
+        # TOKEN(col, delimiters, n) → F.split + getItem
+        m = _re.match(
+            r'^TOKEN\s*\(\s*(\w+)\s*,\s*"([^"]*)"\s*,\s*(\d+)\s*\)$',
+            result, _re.IGNORECASE,
+        )
+        if m:
+            col, delim, n = m.group(1), m.group(2), int(m.group(3))
+            escaped_delim = _re.escape(delim)
+            return f'F.split(F.col("{col}"), "[{escaped_delim}]").getItem({n - 1})'
+
+        # REVERSE(col)
+        m = _re.match(r"^REVERSE\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.reverse(F.col("{m.group(1)}"))'
+
         # REPLACE(col, old, new)
         m = _re.match(r'^REPLACE\s*\(\s*(\w+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\)$', result, _re.IGNORECASE)
         if m:
             return f'F.regexp_replace(F.col("{m.group(1)}"), "{m.group(2)}", "{m.group(3)}")'
+
         # SUBSTRING(col, start, len)
         m = _re.match(r"^SUBSTRING\s*\(\s*(\w+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$", result, _re.IGNORECASE)
         if m:
             return f'F.substring(F.col("{m.group(1)}"), {m.group(2)}, {m.group(3)})'
+
+        # CONCATENATE / string concatenation with +
+        # "literal" + col + "literal" → F.concat
+        if _re.search(r'"[^"]*"\s*\+\s*\w+|\w+\s*\+\s*"[^"]*"', result):
+            parts = [p.strip() for p in result.split("+")]
+            spark_parts = []
+            for p in parts:
+                if p.startswith('"') and p.endswith('"'):
+                    spark_parts.append(f'F.lit({p})')
+                else:
+                    spark_parts.append(f'F.col("{p}")')
+            return f'F.concat({", ".join(spark_parts)})'
+
+        # ABS(col)
+        m = _re.match(r"^ABS\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.abs(F.col("{m.group(1)}"))'
+
+        # CEILING(col) / FLOOR(col)
+        m = _re.match(r"^(CEILING|FLOOR)\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
+        if m:
+            func = "ceil" if m.group(1).upper() == "CEILING" else "floor"
+            return f'F.{func}(F.col("{m.group(2)}"))'
+
+        # ROUND(col, precision)
+        m = _re.match(r"^ROUND\s*\(\s*(\w+)\s*,\s*(\d+)\s*\)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.round(F.col("{m.group(1)}"), {m.group(2)})'
+
+        # POWER(col, exp)
+        m = _re.match(r"^POWER\s*\(\s*(\w+)\s*,\s*(\d+)\s*\)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.pow(F.col("{m.group(1)}"), {m.group(2)})'
+
+        # SIGN(col)
+        m = _re.match(r"^SIGN\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.signum(F.col("{m.group(1)}"))'
+
+        # SQUARE(col)
+        m = _re.match(r"^SQUARE\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.pow(F.col("{m.group(1)}"), 2)'
+
+        # SQRT(col)
+        m = _re.match(r"^SQRT\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.sqrt(F.col("{m.group(1)}"))'
+
+        # EXP(col) / LOG(col) / LOG10(col)
+        m = _re.match(r"^(EXP|LOG|LOG10)\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
+        if m:
+            func_map = {"EXP": "exp", "LOG": "log", "LOG10": "log10"}
+            return f'F.{func_map[m.group(1).upper()]}(F.col("{m.group(2)}"))'
+
+        # HEX(col)
+        m = _re.match(r"^HEX\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.hex(F.col("{m.group(1)}"))'
+
+        # --- Data type casts ---
         # (DT_STR,len,codepage) col → col.cast("string")
         m = _re.match(r"^\(DT_STR\s*,\s*\d+\s*,\s*\d+\s*\)\s*(\w+)$", result, _re.IGNORECASE)
         if m:
             return f'F.col("{m.group(1)}").cast("string")'
-        # (DT_I4) col → col.cast("int")
-        m = _re.match(r"^\(DT_I4\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").cast("int")'
         # (DT_WSTR,len) col → col.cast("string")
         m = _re.match(r"^\(DT_WSTR\s*,\s*\d+\s*\)\s*(\w+)$", result, _re.IGNORECASE)
         if m:
             return f'F.col("{m.group(1)}").cast("string")'
-        # Ternary: cond ? a : b → F.when(cond, a).otherwise(b) – passthrough, too complex to fully parse
-        if "?" in result and ":" in result:
-            return f'F.expr("{result}")  # TODO: Review SSIS ternary expression'
+        # (DT_I1) / (DT_UI1) → tinyint
+        m = _re.match(r"^\(DT_(?:I1|UI1)\)\s*(\w+)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.col("{m.group(1)}").cast("tinyint")'
+        # (DT_I2) / (DT_UI2) → smallint
+        m = _re.match(r"^\(DT_(?:I2|UI2)\)\s*(\w+)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.col("{m.group(1)}").cast("smallint")'
+        # (DT_I4) → int
+        m = _re.match(r"^\(DT_I4\)\s*(\w+)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.col("{m.group(1)}").cast("int")'
+        # (DT_UI4) → int (unsigned not native in Spark)
+        m = _re.match(r"^\(DT_UI4\)\s*(\w+)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.col("{m.group(1)}").cast("int")'
+        # (DT_I8) / (DT_UI8) → bigint
+        m = _re.match(r"^\(DT_(?:I8|UI8)\)\s*(\w+)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.col("{m.group(1)}").cast("bigint")'
+        # (DT_R4) → float
+        m = _re.match(r"^\(DT_R4\)\s*(\w+)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.col("{m.group(1)}").cast("float")'
+        # (DT_R8) → double
+        m = _re.match(r"^\(DT_R8\)\s*(\w+)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.col("{m.group(1)}").cast("double")'
+        # (DT_DECIMAL,scale) / (DT_NUMERIC,precision,scale) → decimal
+        m = _re.match(r"^\(DT_DECIMAL\s*,\s*(\d+)\s*\)\s*(\w+)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.col("{m.group(2)}").cast("decimal(38,{m.group(1)})")'
+        m = _re.match(r"^\(DT_NUMERIC\s*,\s*(\d+)\s*,\s*(\d+)\s*\)\s*(\w+)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.col("{m.group(3)}").cast("decimal({m.group(1)},{m.group(2)})")'
+        # (DT_CY) → decimal(19,4) (currency)
+        m = _re.match(r"^\(DT_CY\)\s*(\w+)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.col("{m.group(1)}").cast("decimal(19,4)")'
+        # (DT_BOOL) → boolean
+        m = _re.match(r"^\(DT_BOOL\)\s*(\w+)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.col("{m.group(1)}").cast("boolean")'
+        # (DT_DATE) / (DT_DBDATE) → date
+        m = _re.match(r"^\(DT_(?:DATE|DBDATE)\)\s*(\w+)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.col("{m.group(1)}").cast("date")'
+        # (DT_DBTIMESTAMP) / (DT_DBTIMESTAMP2) → timestamp
+        m = _re.match(r"^\(DT_DBTIMESTAMP2?\)\s*(\w+)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.col("{m.group(1)}").cast("timestamp")'
+        # (DT_GUID) → string
+        m = _re.match(r"^\(DT_GUID\)\s*(\w+)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.col("{m.group(1)}").cast("string")  # GUID → string'
+        # (DT_BYTES,len) → binary
+        m = _re.match(r"^\(DT_BYTES\s*,\s*\d+\s*\)\s*(\w+)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.col("{m.group(1)}").cast("binary")'
+
+        # --- Ternary: cond ? a : b → F.when(cond, a).otherwise(b) ---
+        m = _re.match(r'^(.+?)\s*\?\s*(.+?)\s*:\s*(.+)$', result)
+        if m:
+            cond, then, else_ = m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
+            return f'F.when(F.expr("{cond}"), F.expr("{then}")).otherwise(F.expr("{else_}"))'
+
+        # --- Boolean operators ---
+        # col == val / col != val / col > val etc. → pass through as expr
+        # || → .or. and && → .and.
+        result = result.replace("||", " | ").replace("&&", " & ")
+
         # Fallback
         return f'F.expr("{result}")  # TODO: Review SSIS expression'
 
