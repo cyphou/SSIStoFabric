@@ -1,0 +1,391 @@
+<?xml version="1.0"?>
+<!--
+  Example 12 - Parent-Child Package Orchestration
+  =================================================
+  Master (parent) package that orchestrates multiple child packages:
+    - Execute Package Tasks reference child .dtsx files
+    - Parallel and sequential child execution
+    - Shared connection managers passed via configurations
+    - Parent variable propagation to child packages
+    - ForEach loop over dynamically discovered child packages
+
+  Migration Target: Data Factory (pipeline orchestration pattern)
+  Complexity: MEDIUM
+-->
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:ObjectName="MasterOrchestrator"
+  DTS:Description="Master package orchestrating child SSIS packages for nightly ETL batch"
+  DTS:CreationDate="2024-10-01T02:00:00"
+  DTS:CreatorName="DataEngineer"
+  DTS:FormatVersion="8"
+  DTS:DTSID="{12000000-0001-0000-0000-000000000001}">
+
+  <!-- Connection Managers -->
+  <DTS:ConnectionManager
+    DTS:ObjectName="ETL_Control_DB"
+    DTS:DTSID="{12000000-0001-0000-0000-000000000010}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=dw-prod;Initial Catalog=ETL_Control;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="DW_Shared"
+    DTS:DTSID="{12000000-0001-0000-0000-000000000011}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=dw-prod;Initial Catalog=AnalyticsDW;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="SMTP_Notifications"
+    DTS:DTSID="{12000000-0001-0000-0000-000000000012}"
+    DTS:CreationName="SMTP">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="SmtpServer=smtp.company.com;UseWindowsAuthentication=True;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <!-- Variables -->
+  <DTS:Variable DTS:ObjectName="BatchID" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="BatchStartTime" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String"></DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="ChildPackagePath" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String"></DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="TotalChildSuccess" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="TotalChildFailure" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="PackageFolder" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String">\\\\file-server\etl\packages\nightly</DTS:VariableValue>
+  </DTS:Variable>
+
+  <!-- Control Flow -->
+  <DTS:Executables>
+
+    <!-- Step 1: Initialize Batch -->
+    <DTS:Executable
+      DTS:ObjectName="Initialize Batch"
+      DTS:DTSID="{12000000-0001-0000-0000-000000000100}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Create a new batch record and get BatchID">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{12000000-0001-0000-0000-000000000010}"
+          SQLTask:SqlStatementSource="INSERT INTO dbo.ETL_Batch (StartTime, Status) VALUES (GETDATE(), 'Running'); SELECT SCOPE_IDENTITY() AS BatchID" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 2: Staging Layer (Sequence Container with parallel child packages) -->
+    <DTS:Executable
+      DTS:ObjectName="Stage Extraction Layer"
+      DTS:DTSID="{12000000-0001-0000-0000-000000000200}"
+      DTS:CreationName="STOCK:SEQUENCE"
+      DTS:Description="Run staging extract packages in parallel">
+      <DTS:Executables>
+
+        <!-- Child Package: Extract Customers -->
+        <DTS:Executable
+          DTS:ObjectName="Extract Customers"
+          DTS:DTSID="{12000000-0001-0000-0000-000000000210}"
+          DTS:CreationName="Microsoft.ExecutePackageTask"
+          DTS:Description="Execute child package for customer extraction">
+          <DTS:ObjectData>
+            <DTS:ExecutePackageTask>
+              <DTS:PackageName>extract_customers.dtsx</DTS:PackageName>
+              <DTS:Connection>{12000000-0001-0000-0000-000000000010}</DTS:Connection>
+            </DTS:ExecutePackageTask>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- Child Package: Extract Orders -->
+        <DTS:Executable
+          DTS:ObjectName="Extract Orders"
+          DTS:DTSID="{12000000-0001-0000-0000-000000000220}"
+          DTS:CreationName="Microsoft.ExecutePackageTask"
+          DTS:Description="Execute child package for order extraction">
+          <DTS:ObjectData>
+            <DTS:ExecutePackageTask>
+              <DTS:PackageName>extract_orders.dtsx</DTS:PackageName>
+              <DTS:Connection>{12000000-0001-0000-0000-000000000010}</DTS:Connection>
+            </DTS:ExecutePackageTask>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- Child Package: Extract Products -->
+        <DTS:Executable
+          DTS:ObjectName="Extract Products"
+          DTS:DTSID="{12000000-0001-0000-0000-000000000230}"
+          DTS:CreationName="Microsoft.ExecutePackageTask"
+          DTS:Description="Execute child package for product extraction">
+          <DTS:ObjectData>
+            <DTS:ExecutePackageTask>
+              <DTS:PackageName>extract_products.dtsx</DTS:PackageName>
+              <DTS:Connection>{12000000-0001-0000-0000-000000000010}</DTS:Connection>
+            </DTS:ExecutePackageTask>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- Child Package: Extract Inventory -->
+        <DTS:Executable
+          DTS:ObjectName="Extract Inventory"
+          DTS:DTSID="{12000000-0001-0000-0000-000000000240}"
+          DTS:CreationName="Microsoft.ExecutePackageTask"
+          DTS:Description="Execute child package for inventory extraction">
+          <DTS:ObjectData>
+            <DTS:ExecutePackageTask>
+              <DTS:PackageName>extract_inventory.dtsx</DTS:PackageName>
+              <DTS:Connection>{12000000-0001-0000-0000-000000000010}</DTS:Connection>
+            </DTS:ExecutePackageTask>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+      </DTS:Executables>
+    </DTS:Executable>
+
+    <!-- Step 3: Dimension Loads (sequential, order matters) -->
+    <DTS:Executable
+      DTS:ObjectName="Dimension Load Layer"
+      DTS:DTSID="{12000000-0001-0000-0000-000000000300}"
+      DTS:CreationName="STOCK:SEQUENCE"
+      DTS:Description="Load dimension tables via child packages sequentially">
+      <DTS:Executables>
+
+        <DTS:Executable
+          DTS:ObjectName="Load DimDate"
+          DTS:DTSID="{12000000-0001-0000-0000-000000000310}"
+          DTS:CreationName="Microsoft.ExecutePackageTask"
+          DTS:Description="Execute child package for Date dimension load">
+          <DTS:ObjectData>
+            <DTS:ExecutePackageTask>
+              <DTS:PackageName>load_dim_date.dtsx</DTS:PackageName>
+              <DTS:Connection>{12000000-0001-0000-0000-000000000010}</DTS:Connection>
+            </DTS:ExecutePackageTask>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <DTS:Executable
+          DTS:ObjectName="Load DimCustomer"
+          DTS:DTSID="{12000000-0001-0000-0000-000000000320}"
+          DTS:CreationName="Microsoft.ExecutePackageTask"
+          DTS:Description="Execute child package for Customer dimension load (SCD Type 2)">
+          <DTS:ObjectData>
+            <DTS:ExecutePackageTask>
+              <DTS:PackageName>load_dim_customer.dtsx</DTS:PackageName>
+              <DTS:Connection>{12000000-0001-0000-0000-000000000010}</DTS:Connection>
+            </DTS:ExecutePackageTask>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <DTS:Executable
+          DTS:ObjectName="Load DimProduct"
+          DTS:DTSID="{12000000-0001-0000-0000-000000000330}"
+          DTS:CreationName="Microsoft.ExecutePackageTask"
+          DTS:Description="Execute child package for Product dimension load">
+          <DTS:ObjectData>
+            <DTS:ExecutePackageTask>
+              <DTS:PackageName>load_dim_product.dtsx</DTS:PackageName>
+              <DTS:Connection>{12000000-0001-0000-0000-000000000010}</DTS:Connection>
+            </DTS:ExecutePackageTask>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+      </DTS:Executables>
+
+      <!-- Dimension loads must be sequential -->
+      <DTS:PrecedenceConstraints>
+        <DTS:PrecedenceConstraint DTS:From="{12000000-0001-0000-0000-000000000310}" DTS:To="{12000000-0001-0000-0000-000000000320}" DTS:Value="0" />
+        <DTS:PrecedenceConstraint DTS:From="{12000000-0001-0000-0000-000000000320}" DTS:To="{12000000-0001-0000-0000-000000000330}" DTS:Value="0" />
+      </DTS:PrecedenceConstraints>
+    </DTS:Executable>
+
+    <!-- Step 4: Fact Table Loads -->
+    <DTS:Executable
+      DTS:ObjectName="Fact Load Layer"
+      DTS:DTSID="{12000000-0001-0000-0000-000000000400}"
+      DTS:CreationName="STOCK:SEQUENCE"
+      DTS:Description="Load fact tables via child packages">
+      <DTS:Executables>
+
+        <DTS:Executable
+          DTS:ObjectName="Load FactSales"
+          DTS:DTSID="{12000000-0001-0000-0000-000000000410}"
+          DTS:CreationName="Microsoft.ExecutePackageTask"
+          DTS:Description="Execute child package for Sales fact table load">
+          <DTS:ObjectData>
+            <DTS:ExecutePackageTask>
+              <DTS:PackageName>load_fact_sales.dtsx</DTS:PackageName>
+              <DTS:Connection>{12000000-0001-0000-0000-000000000010}</DTS:Connection>
+            </DTS:ExecutePackageTask>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <DTS:Executable
+          DTS:ObjectName="Load FactInventory"
+          DTS:DTSID="{12000000-0001-0000-0000-000000000420}"
+          DTS:CreationName="Microsoft.ExecutePackageTask"
+          DTS:Description="Execute child package for Inventory fact table load">
+          <DTS:ObjectData>
+            <DTS:ExecutePackageTask>
+              <DTS:PackageName>load_fact_inventory.dtsx</DTS:PackageName>
+              <DTS:Connection>{12000000-0001-0000-0000-000000000010}</DTS:Connection>
+            </DTS:ExecutePackageTask>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+      </DTS:Executables>
+    </DTS:Executable>
+
+    <!-- Step 5: Dynamic child package execution via ForEach loop -->
+    <DTS:Executable
+      DTS:ObjectName="Run Custom Post-Processing"
+      DTS:DTSID="{12000000-0001-0000-0000-000000000500}"
+      DTS:CreationName="STOCK:FOREACHLOOP"
+      DTS:Description="ForEach loop iterating over child packages found in a folder for post-processing">
+      <DTS:Executables>
+
+        <DTS:Executable
+          DTS:ObjectName="Execute Dynamic Child Package"
+          DTS:DTSID="{12000000-0001-0000-0000-000000000510}"
+          DTS:CreationName="Microsoft.ExecutePackageTask"
+          DTS:Description="Execute each child package found by the ForEach enumerator">
+          <DTS:ObjectData>
+            <DTS:ExecutePackageTask>
+              <DTS:PackageName></DTS:PackageName>
+              <DTS:Connection>{12000000-0001-0000-0000-000000000010}</DTS:Connection>
+            </DTS:ExecutePackageTask>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <DTS:Executable
+          DTS:ObjectName="Log Child Package Result"
+          DTS:DTSID="{12000000-0001-0000-0000-000000000520}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask"
+          DTS:Description="Log the result of the child package execution">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{12000000-0001-0000-0000-000000000010}"
+              SQLTask:SqlStatementSource="INSERT INTO dbo.ETL_PackageLog (BatchID, PackagePath, Status, ExecutedAt) VALUES (?, ?, 'Success', GETDATE())" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+      </DTS:Executables>
+
+      <DTS:PrecedenceConstraints>
+        <DTS:PrecedenceConstraint DTS:From="{12000000-0001-0000-0000-000000000510}" DTS:To="{12000000-0001-0000-0000-000000000520}" DTS:Value="0" />
+      </DTS:PrecedenceConstraints>
+    </DTS:Executable>
+
+    <!-- Step 6: Rebuild indexes -->
+    <DTS:Executable
+      DTS:ObjectName="Rebuild DW Indexes"
+      DTS:DTSID="{12000000-0001-0000-0000-000000000600}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Rebuild indexes on data warehouse tables after load">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{12000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="EXEC dbo.sp_RebuildAllIndexes @SchemaName='dw'" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 7: Finalize Batch -->
+    <DTS:Executable
+      DTS:ObjectName="Finalize Batch"
+      DTS:DTSID="{12000000-0001-0000-0000-000000000700}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Update batch status to completed and record final statistics">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{12000000-0001-0000-0000-000000000010}"
+          SQLTask:SqlStatementSource="UPDATE dbo.ETL_Batch SET EndTime = GETDATE(), Status = 'Complete', SuccessCount = ?, FailureCount = ? WHERE BatchID = ?" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 8: Send notification -->
+    <DTS:Executable
+      DTS:ObjectName="Send Batch Notification"
+      DTS:DTSID="{12000000-0001-0000-0000-000000000800}"
+      DTS:CreationName="Microsoft.SendMailTask"
+      DTS:Description="Send email notification with batch results">
+      <DTS:ObjectData>
+        <DTS:SendMailTask
+          ToLine="data-team@company.com"
+          Subject="Nightly ETL Batch Complete"
+          MessageSource="Batch completed successfully." />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+  </DTS:Executables>
+
+  <!-- Top-level Precedence Constraints -->
+  <DTS:PrecedenceConstraints>
+    <!-- Init → Staging (parallel extracts) -->
+    <DTS:PrecedenceConstraint DTS:From="{12000000-0001-0000-0000-000000000100}" DTS:To="{12000000-0001-0000-0000-000000000200}" DTS:Value="0" />
+    <!-- Staging → Dimension Loads -->
+    <DTS:PrecedenceConstraint DTS:From="{12000000-0001-0000-0000-000000000200}" DTS:To="{12000000-0001-0000-0000-000000000300}" DTS:Value="0" />
+    <!-- Dimensions → Fact Loads -->
+    <DTS:PrecedenceConstraint DTS:From="{12000000-0001-0000-0000-000000000300}" DTS:To="{12000000-0001-0000-0000-000000000400}" DTS:Value="0" />
+    <!-- Facts → Post-processing loop -->
+    <DTS:PrecedenceConstraint DTS:From="{12000000-0001-0000-0000-000000000400}" DTS:To="{12000000-0001-0000-0000-000000000500}" DTS:Value="0" />
+    <!-- Post-processing → Rebuild indexes -->
+    <DTS:PrecedenceConstraint DTS:From="{12000000-0001-0000-0000-000000000500}" DTS:To="{12000000-0001-0000-0000-000000000600}" DTS:Value="0" />
+    <!-- Rebuild → Finalize -->
+    <DTS:PrecedenceConstraint DTS:From="{12000000-0001-0000-0000-000000000600}" DTS:To="{12000000-0001-0000-0000-000000000700}" DTS:Value="0" />
+    <!-- Finalize → Notify -->
+    <DTS:PrecedenceConstraint DTS:From="{12000000-0001-0000-0000-000000000700}" DTS:To="{12000000-0001-0000-0000-000000000800}" DTS:Value="0" />
+  </DTS:PrecedenceConstraints>
+
+  <!-- Event Handlers -->
+  <DTS:EventHandlers>
+    <DTS:EventHandler DTS:EventName="OnError">
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:ObjectName="Log Batch Error"
+          DTS:DTSID="{12000000-0001-0000-0000-000000000910}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{12000000-0001-0000-0000-000000000010}"
+              SQLTask:SqlStatementSource="UPDATE dbo.ETL_Batch SET Status = 'Failed', ErrorMessage = ? WHERE BatchID = ?" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <DTS:Executable
+          DTS:ObjectName="Send Error Alert"
+          DTS:DTSID="{12000000-0001-0000-0000-000000000920}"
+          DTS:CreationName="Microsoft.SendMailTask"
+          DTS:Description="Send urgent error notification">
+          <DTS:ObjectData>
+            <DTS:SendMailTask
+              ToLine="data-oncall@company.com"
+              Subject="URGENT: Nightly ETL Batch FAILED"
+              MessageSource="The nightly ETL batch has failed. Check ETL_Control.dbo.ETL_Batch for details." />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:EventHandler>
+  </DTS:EventHandlers>
+
+</DTS:Executable>

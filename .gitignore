@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+.vs/
+*.swp
+*.swo
+*.suo
+*.user
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+test-results/
+regression-baselines/
+regression-outputs/
+
+# Environment
+.env
+.env.local
+
+# Logs
+logs/
+*.log
+
+# Migration outputs
+output/
+migration_output/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Debug / scratch files — anything prefixed with _
+_*.py
+_*.txt

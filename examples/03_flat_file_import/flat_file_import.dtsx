@@ -1,0 +1,191 @@
+<?xml version="1.0"?>
+<!--
+  Example 03 - Flat File Import
+  ==============================
+  Imports a CSV file into a database table with:
+    1. Truncate staging table
+    2. Load from flat file with data type conversions
+    3. Row count capture
+    4. Audit logging
+
+  Migration Target: Data Factory (Copy Activity with Flat File connector)
+  Complexity: MEDIUM (due to flat file source + data conversion)
+-->
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:ObjectName="FlatFileImportPackage"
+  DTS:Description="Import product catalog CSV into staging database"
+  DTS:CreationDate="2024-06-02T10:00:00"
+  DTS:CreatorName="DataEngineer"
+  DTS:FormatVersion="8"
+  DTS:DTSID="{03000000-0001-0000-0000-000000000001}">
+
+  <!-- Connection Managers -->
+  <DTS:ConnectionManager
+    DTS:ObjectName="ProductCSV"
+    DTS:DTSID="{03000000-0001-0000-0000-000000000010}"
+    DTS:CreationName="FLATFILE">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="\\file-server\imports\products\product_catalog.csv" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="StagingDB"
+    DTS:DTSID="{03000000-0001-0000-0000-000000000011}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=staging-server;Initial Catalog=StagingDB;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <!-- Variables -->
+  <DTS:Variable DTS:ObjectName="ImportRowCount" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="SourceFilePath" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String">\\file-server\imports\products\product_catalog.csv</DTS:VariableValue>
+  </DTS:Variable>
+
+  <!-- Control Flow -->
+  <DTS:Executables>
+
+    <!-- Step 1: Truncate staging -->
+    <DTS:Executable
+      DTS:ObjectName="Truncate Product Staging"
+      DTS:DTSID="{03000000-0001-0000-0000-000000000100}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Clear staging table before CSV import">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{03000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="TRUNCATE TABLE dbo.Stg_Products" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 2: Data Flow - CSV to Staging -->
+    <DTS:Executable
+      DTS:ObjectName="Import Product CSV"
+      DTS:DTSID="{03000000-0001-0000-0000-000000000101}"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:Description="Read CSV file, convert data types, and load to staging">
+      <DTS:ObjectData>
+        <pipeline version="1">
+          <components>
+            <component name="CSV Source" componentClassID="Microsoft.FlatFileSource">
+              <properties>
+                <property name="ConnectionManagerID">{03000000-0001-0000-0000-000000000010}</property>
+              </properties>
+              <outputs>
+                <output name="Flat File Source Output">
+                  <outputColumns>
+                    <outputColumn name="ProductCode" dataType="str" length="20" />
+                    <outputColumn name="ProductName" dataType="str" length="200" />
+                    <outputColumn name="Category" dataType="str" length="50" />
+                    <outputColumn name="UnitPrice" dataType="str" length="20" />
+                    <outputColumn name="Weight" dataType="str" length="15" />
+                    <outputColumn name="IsActive" dataType="str" length="5" />
+                    <outputColumn name="LaunchDate" dataType="str" length="25" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <component name="Convert Data Types" componentClassID="Microsoft.DataConvert">
+              <outputs>
+                <output name="Data Conversion Output">
+                  <outputColumns>
+                    <outputColumn name="UnitPrice_Decimal" dataType="numeric" precision="18" scale="2" />
+                    <outputColumn name="Weight_Decimal" dataType="numeric" precision="10" scale="3" />
+                    <outputColumn name="IsActive_Bool" dataType="bool" />
+                    <outputColumn name="LaunchDate_DT" dataType="dbTimeStamp" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <component name="Count Imported Rows" componentClassID="Microsoft.RowCount">
+            </component>
+
+            <component name="Staging Destination" componentClassID="Microsoft.OLEDBDestination">
+              <properties>
+                <property name="OpenRowset">dbo.Stg_Products</property>
+              </properties>
+              <inputs>
+                <input name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn name="ProductCode" />
+                    <inputColumn name="ProductName" />
+                    <inputColumn name="Category" />
+                    <inputColumn name="UnitPrice_Decimal" />
+                    <inputColumn name="Weight_Decimal" />
+                    <inputColumn name="IsActive_Bool" />
+                    <inputColumn name="LaunchDate_DT" />
+                  </inputColumns>
+                </input>
+              </inputs>
+            </component>
+          </components>
+
+          <paths>
+            <path startId="CSV Source.Outputs[Flat File Source Output]"
+                  endId="Convert Data Types.Inputs[Data Conversion Input]" />
+            <path startId="Convert Data Types.Outputs[Data Conversion Output]"
+                  endId="Count Imported Rows.Inputs[Row Count Input]" />
+            <path startId="Count Imported Rows.Outputs[Row Count Output]"
+                  endId="Staging Destination.Inputs[OLE DB Destination Input]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 3: Merge into final table -->
+    <DTS:Executable
+      DTS:ObjectName="Merge Products"
+      DTS:DTSID="{03000000-0001-0000-0000-000000000102}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Upsert products from staging into target table">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{03000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="EXEC dbo.sp_MergeProducts" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 4: Log import result -->
+    <DTS:Executable
+      DTS:ObjectName="Log Import Stats"
+      DTS:DTSID="{03000000-0001-0000-0000-000000000103}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Record import statistics">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{03000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="INSERT INTO dbo.ImportLog (PackageName, TableName, RowCount, ImportDate) VALUES ('FlatFileImport', 'Products', ?, GETDATE())" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+  </DTS:Executables>
+
+  <!-- Precedence Constraints -->
+  <DTS:PrecedenceConstraints>
+    <DTS:PrecedenceConstraint
+      DTS:From="{03000000-0001-0000-0000-000000000100}"
+      DTS:To="{03000000-0001-0000-0000-000000000101}"
+      DTS:Value="0" />
+    <DTS:PrecedenceConstraint
+      DTS:From="{03000000-0001-0000-0000-000000000101}"
+      DTS:To="{03000000-0001-0000-0000-000000000102}"
+      DTS:Value="0" />
+    <DTS:PrecedenceConstraint
+      DTS:From="{03000000-0001-0000-0000-000000000102}"
+      DTS:To="{03000000-0001-0000-0000-000000000103}"
+      DTS:Value="0" />
+  </DTS:PrecedenceConstraints>
+
+</DTS:Executable>

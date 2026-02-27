@@ -1,0 +1,306 @@
+<?xml version="1.0"?>
+<!--
+  Example 11 - Real-time CDC (Change Data Capture) Pattern
+  ==========================================================
+  CDC-based incremental load implementing:
+    - Read CDC change table (inserts, updates, deletes)
+    - Conditional split by CDC operation type (__$operation)
+    - Separate handling for inserts, updates, and deletes
+    - Script Component for complex merge logic
+    - Audit trail with before/after images
+
+  Migration Target: Spark (complex CDC logic requires custom processing)
+  Complexity: HIGH
+-->
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:ObjectName="RealtimeCDCPackage"
+  DTS:Description="CDC-based incremental load with insert/update/delete handling and audit trail"
+  DTS:CreationDate="2024-09-15T04:00:00"
+  DTS:CreatorName="DataEngineer"
+  DTS:FormatVersion="8"
+  DTS:DTSID="{11000000-0001-0000-0000-000000000001}">
+
+  <!-- Connection Managers -->
+  <DTS:ConnectionManager
+    DTS:ObjectName="CDC_Source"
+    DTS:DTSID="{11000000-0001-0000-0000-000000000010}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=oltp-prod;Initial Catalog=OrdersDB;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="DW_Target"
+    DTS:DTSID="{11000000-0001-0000-0000-000000000011}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=dw-prod;Initial Catalog=AnalyticsDW;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="AuditDB"
+    DTS:DTSID="{11000000-0001-0000-0000-000000000012}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=dw-prod;Initial Catalog=ETL_Audit;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <!-- Variables -->
+  <DTS:Variable DTS:ObjectName="CDC_LSN_Start" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String">0x00000000000000000000</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="CDC_LSN_End" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String">0x00000000000000000000</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="InsertCount" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="UpdateCount" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="DeleteCount" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <!-- Control Flow -->
+  <DTS:Executables>
+
+    <!-- Step 1: Get CDC window -->
+    <DTS:Executable
+      DTS:ObjectName="Get CDC LSN Range"
+      DTS:DTSID="{11000000-0001-0000-0000-000000000100}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Get the LSN range for this CDC extraction window">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{11000000-0001-0000-0000-000000000010}"
+          SQLTask:SqlStatementSource="DECLARE @from_lsn binary(10), @to_lsn binary(10); SELECT @from_lsn = LastProcessedLSN FROM dbo.CDC_Tracking WHERE TableName = 'Orders'; SET @to_lsn = sys.fn_cdc_get_max_lsn(); SELECT @from_lsn AS CDC_LSN_Start, @to_lsn AS CDC_LSN_End" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 2: Data Flow - Process CDC Changes -->
+    <DTS:Executable
+      DTS:ObjectName="Process Order Changes"
+      DTS:DTSID="{11000000-0001-0000-0000-000000000200}"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:Description="Read CDC changes and route inserts, updates, and deletes separately">
+      <DTS:ObjectData>
+        <pipeline version="1">
+          <components>
+            <!-- Source: CDC change records -->
+            <component name="CDC Change Source" componentClassID="Microsoft.OLEDBSource">
+              <properties>
+                <property name="SqlCommand">SELECT __$operation, __$start_lsn, __$update_mask, OrderID, CustomerID, OrderDate, TotalAmount, Status, ShipDate, ModifiedDate FROM cdc.fn_cdc_get_all_changes_dbo_Orders(?, ?, N'all update old')</property>
+              </properties>
+              <outputs>
+                <output name="OLE DB Source Output">
+                  <outputColumns>
+                    <outputColumn name="__$operation" dataType="i4" />
+                    <outputColumn name="__$start_lsn" dataType="bytes" length="10" />
+                    <outputColumn name="__$update_mask" dataType="bytes" length="128" />
+                    <outputColumn name="OrderID" dataType="i4" />
+                    <outputColumn name="CustomerID" dataType="i4" />
+                    <outputColumn name="OrderDate" dataType="dbTimeStamp" />
+                    <outputColumn name="TotalAmount" dataType="numeric" precision="18" scale="2" />
+                    <outputColumn name="Status" dataType="str" length="20" />
+                    <outputColumn name="ShipDate" dataType="dbTimeStamp" />
+                    <outputColumn name="ModifiedDate" dataType="dbTimeStamp" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <!-- Script: decode CDC operation and generate before/after images -->
+            <component name="Decode CDC Operations" componentClassID="Microsoft.ScriptComponent">
+              <properties>
+                <property name="ScriptLanguage">CSharp</property>
+              </properties>
+            </component>
+
+            <!-- Conditional Split: route by operation type -->
+            <component name="Route by Operation" componentClassID="Microsoft.ConditionalSplit">
+            </component>
+
+            <!-- Row counts for each operation -->
+            <component name="Count Inserts" componentClassID="Microsoft.RowCount">
+            </component>
+
+            <component name="Count Updates" componentClassID="Microsoft.RowCount">
+            </component>
+
+            <component name="Count Deletes" componentClassID="Microsoft.RowCount">
+            </component>
+
+            <!-- Destination: New records (inserts) -->
+            <component name="Insert New Orders" componentClassID="Microsoft.OLEDBDestination">
+              <properties>
+                <property name="OpenRowset">stg.CDC_Orders_Insert</property>
+              </properties>
+              <inputs>
+                <input name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn name="OrderID" />
+                    <inputColumn name="CustomerID" />
+                    <inputColumn name="OrderDate" />
+                    <inputColumn name="TotalAmount" />
+                    <inputColumn name="Status" />
+                    <inputColumn name="ShipDate" />
+                    <inputColumn name="ModifiedDate" />
+                  </inputColumns>
+                </input>
+              </inputs>
+            </component>
+
+            <!-- OLE DB Command: Apply updates -->
+            <component name="Apply Updates" componentClassID="Microsoft.OLEDBCommand">
+              <properties>
+                <property name="SqlCommand">UPDATE dw.Orders SET CustomerID=?, OrderDate=?, TotalAmount=?, Status=?, ShipDate=?, ModifiedDate=? WHERE OrderID=?</property>
+              </properties>
+            </component>
+
+            <!-- OLE DB Command: Soft delete -->
+            <component name="Soft Delete Orders" componentClassID="Microsoft.OLEDBCommand">
+              <properties>
+                <property name="SqlCommand">UPDATE dw.Orders SET IsDeleted=1, DeletedDate=GETDATE() WHERE OrderID=?</property>
+              </properties>
+            </component>
+
+            <!-- Audit: write change trail -->
+            <component name="Audit Trail Dest" componentClassID="Microsoft.OLEDBDestination">
+              <properties>
+                <property name="OpenRowset">audit.CDC_ChangeTrail</property>
+              </properties>
+              <inputs>
+                <input name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn name="OrderID" />
+                    <inputColumn name="__$operation" />
+                    <inputColumn name="ModifiedDate" />
+                  </inputColumns>
+                </input>
+              </inputs>
+            </component>
+          </components>
+
+          <paths>
+            <path startId="CDC Change Source.Outputs[OLE DB Source Output]"
+                  endId="Decode CDC Operations.Inputs[Script Component Input]" />
+            <path startId="Decode CDC Operations.Outputs[Script Component Output]"
+                  endId="Route by Operation.Inputs[Conditional Split Default Input]" />
+            <path startId="Route by Operation.Outputs[Inserts]"
+                  endId="Count Inserts.Inputs[Row Count Input]" />
+            <path startId="Route by Operation.Outputs[Updates]"
+                  endId="Count Updates.Inputs[Row Count Input]" />
+            <path startId="Route by Operation.Outputs[Deletes]"
+                  endId="Count Deletes.Inputs[Row Count Input]" />
+            <path startId="Count Inserts.Outputs[Row Count Output]"
+                  endId="Insert New Orders.Inputs[OLE DB Destination Input]" />
+            <path startId="Count Updates.Outputs[Row Count Output]"
+                  endId="Apply Updates.Inputs[OLE DB Command Input]" />
+            <path startId="Count Deletes.Outputs[Row Count Output]"
+                  endId="Soft Delete Orders.Inputs[OLE DB Command Input]" />
+            <path startId="Decode CDC Operations.Outputs[Audit Output]"
+                  endId="Audit Trail Dest.Inputs[OLE DB Destination Input]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 3: Merge staged inserts -->
+    <DTS:Executable
+      DTS:ObjectName="Merge New Orders"
+      DTS:DTSID="{11000000-0001-0000-0000-000000000300}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Merge newly inserted orders from staging into DW">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{11000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="INSERT INTO dw.Orders (OrderID, CustomerID, OrderDate, TotalAmount, Status, ShipDate, ModifiedDate, IsDeleted) SELECT OrderID, CustomerID, OrderDate, TotalAmount, Status, ShipDate, ModifiedDate, 0 FROM stg.CDC_Orders_Insert WHERE NOT EXISTS (SELECT 1 FROM dw.Orders o WHERE o.OrderID = stg.CDC_Orders_Insert.OrderID)" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 4: Update CDC tracking -->
+    <DTS:Executable
+      DTS:ObjectName="Update CDC Tracking"
+      DTS:DTSID="{11000000-0001-0000-0000-000000000400}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Save the last processed LSN for next run">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{11000000-0001-0000-0000-000000000010}"
+          SQLTask:SqlStatementSource="UPDATE dbo.CDC_Tracking SET LastProcessedLSN = ?, LastProcessedDate = GETDATE(), InsertCount = ?, UpdateCount = ?, DeleteCount = ? WHERE TableName = 'Orders'" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 5: Refresh dependent views -->
+    <DTS:Executable
+      DTS:ObjectName="Refresh Dependent Views"
+      DTS:DTSID="{11000000-0001-0000-0000-000000000500}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Refresh materialized views that depend on orders data">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{11000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="EXEC dw.sp_RefreshOrderViews" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 6: Log CDC cycle -->
+    <DTS:Executable
+      DTS:ObjectName="Log CDC Completion"
+      DTS:DTSID="{11000000-0001-0000-0000-000000000600}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Record CDC cycle completion with statistics">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{11000000-0001-0000-0000-000000000012}"
+          SQLTask:SqlStatementSource="INSERT INTO audit.CDC_Log (TableName, LSN_Start, LSN_End, Inserts, Updates, Deletes, ProcessedAt) VALUES ('Orders', ?, ?, ?, ?, ?, GETDATE())" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+  </DTS:Executables>
+
+  <!-- Precedence Constraints -->
+  <DTS:PrecedenceConstraints>
+    <DTS:PrecedenceConstraint DTS:From="{11000000-0001-0000-0000-000000000100}" DTS:To="{11000000-0001-0000-0000-000000000200}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{11000000-0001-0000-0000-000000000200}" DTS:To="{11000000-0001-0000-0000-000000000300}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{11000000-0001-0000-0000-000000000300}" DTS:To="{11000000-0001-0000-0000-000000000400}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{11000000-0001-0000-0000-000000000400}" DTS:To="{11000000-0001-0000-0000-000000000500}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{11000000-0001-0000-0000-000000000500}" DTS:To="{11000000-0001-0000-0000-000000000600}" DTS:Value="0" />
+  </DTS:PrecedenceConstraints>
+
+  <!-- Event Handlers -->
+  <DTS:EventHandlers>
+    <DTS:EventHandler DTS:EventName="OnError">
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:ObjectName="Log CDC Error"
+          DTS:DTSID="{11000000-0001-0000-0000-000000000900}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{11000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="INSERT INTO audit.CDC_Errors (TableName, ErrorMessage, ErrorTime, LSN_Start, LSN_End) VALUES ('Orders', ?, GETDATE(), ?, ?)" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:EventHandler>
+  </DTS:EventHandlers>
+
+</DTS:Executable>

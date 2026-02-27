@@ -1,0 +1,154 @@
+<?xml version="1.0"?>
+<!--
+  Example 02 - Incremental Load
+  ==============================
+  A typical incremental ETL pattern:
+    1. Get the last-loaded watermark from an audit table
+    2. Extract only new/changed rows using the watermark
+    3. Update the watermark after successful load
+
+  Migration Target: Data Factory (Copy Activity + Script Activities)
+  Complexity: LOW
+-->
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:ObjectName="IncrementalLoadPackage"
+  DTS:Description="Incremental order load using watermark pattern"
+  DTS:CreationDate="2024-06-01T09:00:00"
+  DTS:CreatorName="DataEngineer"
+  DTS:FormatVersion="8"
+  DTS:DTSID="{02000000-0001-0000-0000-000000000001}">
+
+  <!-- Connection Managers -->
+  <DTS:ConnectionManager
+    DTS:ObjectName="SourceOLTP"
+    DTS:DTSID="{02000000-0001-0000-0000-000000000010}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=oltp-prod;Initial Catalog=SalesDB;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="DestStaging"
+    DTS:DTSID="{02000000-0001-0000-0000-000000000011}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=staging-prod;Initial Catalog=StagingDB;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <!-- Variables -->
+  <DTS:Variable DTS:ObjectName="LastLoadDate" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String">1900-01-01</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="CurrentLoadDate" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String">1900-01-01</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="RowsLoaded" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <!-- Control Flow -->
+  <DTS:Executables>
+
+    <!-- Step 1: Get watermark -->
+    <DTS:Executable
+      DTS:ObjectName="Get Last Watermark"
+      DTS:DTSID="{02000000-0001-0000-0000-000000000100}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Retrieve the last successful load timestamp">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{02000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="SELECT ISNULL(MAX(LastLoadDate), '1900-01-01') AS LastLoadDate FROM dbo.ETL_Watermark WHERE TableName = 'Orders'" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 2: Load incremental data -->
+    <DTS:Executable
+      DTS:ObjectName="Load New Orders"
+      DTS:DTSID="{02000000-0001-0000-0000-000000000101}"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:Description="Extract orders modified since last watermark">
+      <DTS:ObjectData>
+        <pipeline version="1">
+          <components>
+            <component name="Source - New Orders" componentClassID="Microsoft.OLEDBSource">
+              <properties>
+                <property name="SqlCommand">SELECT OrderID, CustomerID, OrderDate, TotalAmount, Status, ModifiedDate FROM dbo.Orders WHERE ModifiedDate > ? AND ModifiedDate &lt;= GETDATE()</property>
+              </properties>
+              <outputs>
+                <output name="OLE DB Source Output">
+                  <outputColumns>
+                    <outputColumn name="OrderID" dataType="i4" />
+                    <outputColumn name="CustomerID" dataType="i4" />
+                    <outputColumn name="OrderDate" dataType="dbTimeStamp" />
+                    <outputColumn name="TotalAmount" dataType="numeric" precision="18" scale="2" />
+                    <outputColumn name="Status" dataType="str" length="20" />
+                    <outputColumn name="ModifiedDate" dataType="dbTimeStamp" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <component name="Destination - Staging Orders" componentClassID="Microsoft.OLEDBDestination">
+              <properties>
+                <property name="OpenRowset">dbo.Stg_Orders</property>
+              </properties>
+              <inputs>
+                <input name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn name="OrderID" />
+                    <inputColumn name="CustomerID" />
+                    <inputColumn name="OrderDate" />
+                    <inputColumn name="TotalAmount" />
+                    <inputColumn name="Status" />
+                    <inputColumn name="ModifiedDate" />
+                  </inputColumns>
+                </input>
+              </inputs>
+            </component>
+          </components>
+
+          <paths>
+            <path startId="Source - New Orders.Outputs[OLE DB Source Output]"
+                  endId="Destination - Staging Orders.Inputs[OLE DB Destination Input]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 3: Update watermark -->
+    <DTS:Executable
+      DTS:ObjectName="Update Watermark"
+      DTS:DTSID="{02000000-0001-0000-0000-000000000102}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Update the watermark with current timestamp">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{02000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="MERGE dbo.ETL_Watermark AS tgt USING (SELECT 'Orders' AS TableName, GETDATE() AS LastLoadDate) AS src ON tgt.TableName = src.TableName WHEN MATCHED THEN UPDATE SET LastLoadDate = src.LastLoadDate WHEN NOT MATCHED THEN INSERT (TableName, LastLoadDate) VALUES (src.TableName, src.LastLoadDate);" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+  </DTS:Executables>
+
+  <!-- Precedence Constraints: sequential execution -->
+  <DTS:PrecedenceConstraints>
+    <DTS:PrecedenceConstraint
+      DTS:From="{02000000-0001-0000-0000-000000000100}"
+      DTS:To="{02000000-0001-0000-0000-000000000101}"
+      DTS:Value="0" />
+    <DTS:PrecedenceConstraint
+      DTS:From="{02000000-0001-0000-0000-000000000101}"
+      DTS:To="{02000000-0001-0000-0000-000000000102}"
+      DTS:Value="0" />
+  </DTS:PrecedenceConstraints>
+
+</DTS:Executable>

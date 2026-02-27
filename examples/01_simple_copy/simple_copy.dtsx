@@ -1,0 +1,96 @@
+<?xml version="1.0"?>
+<!--
+  Example 01 - Simple Copy
+  ========================
+  The simplest possible SSIS package: a single Data Flow Task that copies
+  all rows from a source table to a destination table with no transformations.
+
+  Migration Target: Data Factory (Copy Activity)
+  Complexity: LOW
+-->
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:ObjectName="SimpleCopyPackage"
+  DTS:Description="Copies Customers table from OLTP to Staging with no transforms"
+  DTS:CreationDate="2024-06-01T08:00:00"
+  DTS:CreatorName="DataEngineer"
+  DTS:FormatVersion="8"
+  DTS:DTSID="{01000000-0001-0000-0000-000000000001}">
+
+  <!-- Connection Managers -->
+  <DTS:ConnectionManager
+    DTS:ObjectName="OLTP_Source"
+    DTS:DTSID="{01000000-0001-0000-0000-000000000010}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=oltp-server.corp.local;Initial Catalog=AdventureWorks;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="Staging_Dest"
+    DTS:DTSID="{01000000-0001-0000-0000-000000000011}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=staging-server.corp.local;Initial Catalog=StagingDB;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <!-- Control Flow: Single Data Flow Task -->
+  <DTS:Executables>
+    <DTS:Executable
+      DTS:ObjectName="Copy Customers"
+      DTS:DTSID="{01000000-0001-0000-0000-000000000100}"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:Description="Full copy of Person.Customer table">
+      <DTS:ObjectData>
+        <pipeline version="1">
+          <components>
+            <component name="OLE DB Source" componentClassID="Microsoft.OLEDBSource">
+              <properties>
+                <property name="SqlCommand">SELECT CustomerID, PersonID, StoreID, TerritoryID, AccountNumber, ModifiedDate FROM Sales.Customer</property>
+              </properties>
+              <outputs>
+                <output name="OLE DB Source Output">
+                  <outputColumns>
+                    <outputColumn name="CustomerID" dataType="i4" />
+                    <outputColumn name="PersonID" dataType="i4" />
+                    <outputColumn name="StoreID" dataType="i4" />
+                    <outputColumn name="TerritoryID" dataType="i4" />
+                    <outputColumn name="AccountNumber" dataType="str" length="10" />
+                    <outputColumn name="ModifiedDate" dataType="dbTimeStamp" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <component name="OLE DB Destination" componentClassID="Microsoft.OLEDBDestination">
+              <properties>
+                <property name="OpenRowset">dbo.Stg_Customer</property>
+              </properties>
+              <inputs>
+                <input name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn name="CustomerID" />
+                    <inputColumn name="PersonID" />
+                    <inputColumn name="StoreID" />
+                    <inputColumn name="TerritoryID" />
+                    <inputColumn name="AccountNumber" />
+                    <inputColumn name="ModifiedDate" />
+                  </inputColumns>
+                </input>
+              </inputs>
+            </component>
+          </components>
+
+          <paths>
+            <path startId="OLE DB Source.Outputs[OLE DB Source Output]"
+                  endId="OLE DB Destination.Inputs[OLE DB Destination Input]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+  </DTS:Executables>
+
+</DTS:Executable>

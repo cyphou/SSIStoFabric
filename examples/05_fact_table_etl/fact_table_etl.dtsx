@@ -1,0 +1,336 @@
+<?xml version="1.0"?>
+<!--
+  Example 05 - Fact Table ETL
+  ============================
+  Multi-source fact table load with:
+    - Two data flows: Order Lines + Returns
+    - Lookups to get dimension surrogate keys
+    - Derived columns for calculated measures
+    - Conditional split to route error rows
+
+  Migration Target: Hybrid (DF for simple flows, Spark for lookup-heavy transforms)
+  Complexity: MEDIUM
+-->
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:ObjectName="FactTableETL"
+  DTS:Description="Load Fact_Sales from multiple OLTP sources with dimension key lookups"
+  DTS:CreationDate="2024-06-10T08:30:00"
+  DTS:CreatorName="DWArchitect"
+  DTS:FormatVersion="8"
+  DTS:DTSID="{05000000-0001-0000-0000-000000000001}">
+
+  <!-- Connection Managers -->
+  <DTS:ConnectionManager
+    DTS:ObjectName="OLTP_Sales"
+    DTS:DTSID="{05000000-0001-0000-0000-000000000010}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=sales-oltp;Initial Catalog=SalesDB;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="Returns_Source"
+    DTS:DTSID="{05000000-0001-0000-0000-000000000011}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=returns-server;Initial Catalog=ReturnsDB;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="DataWarehouse"
+    DTS:DTSID="{05000000-0001-0000-0000-000000000012}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=dw-server;Initial Catalog=DW_Production;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="ErrorFile"
+    DTS:DTSID="{05000000-0001-0000-0000-000000000013}"
+    DTS:CreationName="FLATFILE">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="C:\ETL\ErrorRows\fact_sales_errors.csv" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <!-- Variables / Parameters -->
+  <DTS:Variable DTS:ObjectName="LoadDate" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String">2024-06-10</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:PackageParameter DTS:ObjectName="TargetSchema" DTS:DataType="String">
+    <DTS:Property DTS:Name="ParameterValue">dbo</DTS:Property>
+  </DTS:PackageParameter>
+
+  <!-- Control Flow -->
+  <DTS:Executables>
+
+    <!-- Step 1: Truncate staging tables -->
+    <DTS:Executable
+      DTS:ObjectName="Truncate Staging Tables"
+      DTS:DTSID="{05000000-0001-0000-0000-000000000100}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Clear staging tables for order lines and returns">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{05000000-0001-0000-0000-000000000012}"
+          SQLTask:SqlStatementSource="TRUNCATE TABLE dbo.Stg_OrderLines; TRUNCATE TABLE dbo.Stg_Returns;" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 2: Sequence Container for parallel data flows -->
+    <DTS:Executable
+      DTS:ObjectName="Load Source Data"
+      DTS:DTSID="{05000000-0001-0000-0000-000000000101}"
+      DTS:CreationName="STOCK:SEQUENCE"
+      DTS:Description="Parallel load of order lines and returns">
+
+      <DTS:Executables>
+        <!-- Data Flow 1: Order Lines with lookups -->
+        <DTS:Executable
+          DTS:ObjectName="Load Order Lines"
+          DTS:DTSID="{05000000-0001-0000-0000-000000000110}"
+          DTS:CreationName="Microsoft.Pipeline"
+          DTS:Description="Extract order lines, lookup dimension keys, calculate measures">
+          <DTS:ObjectData>
+            <pipeline version="1">
+              <components>
+                <component name="Order Lines Source" componentClassID="Microsoft.OLEDBSource">
+                  <properties>
+                    <property name="SqlCommand">SELECT ol.OrderLineID, ol.OrderID, ol.ProductID, ol.Quantity, ol.UnitPrice, ol.Discount, o.CustomerID, o.OrderDate, o.ShipDate, o.StoreID FROM dbo.OrderLine ol INNER JOIN dbo.[Order] o ON ol.OrderID = o.OrderID WHERE o.OrderDate >= ?</property>
+                  </properties>
+                  <outputs>
+                    <output name="OLE DB Source Output">
+                      <outputColumns>
+                        <outputColumn name="OrderLineID" dataType="i4" />
+                        <outputColumn name="OrderID" dataType="i4" />
+                        <outputColumn name="ProductID" dataType="i4" />
+                        <outputColumn name="Quantity" dataType="i2" />
+                        <outputColumn name="UnitPrice" dataType="numeric" precision="18" scale="2" />
+                        <outputColumn name="Discount" dataType="numeric" precision="5" scale="2" />
+                        <outputColumn name="CustomerID" dataType="i4" />
+                        <outputColumn name="OrderDate" dataType="dbTimeStamp" />
+                        <outputColumn name="ShipDate" dataType="dbTimeStamp" />
+                        <outputColumn name="StoreID" dataType="i4" />
+                      </outputColumns>
+                    </output>
+                  </outputs>
+                </component>
+
+                <!-- Lookup: Customer dimension SK -->
+                <component name="Lookup CustomerSK" componentClassID="Microsoft.Lookup">
+                  <properties>
+                    <property name="SqlCommand">SELECT CustomerID, CustomerSK FROM dbo.DimCustomer WHERE IsCurrent = 1</property>
+                  </properties>
+                </component>
+
+                <!-- Lookup: Product dimension SK -->
+                <component name="Lookup ProductSK" componentClassID="Microsoft.Lookup">
+                  <properties>
+                    <property name="SqlCommand">SELECT ProductID, ProductSK FROM dbo.DimProduct WHERE IsCurrent = 1</property>
+                  </properties>
+                </component>
+
+                <!-- Lookup: Date dimension SK -->
+                <component name="Lookup DateSK" componentClassID="Microsoft.Lookup">
+                  <properties>
+                    <property name="SqlCommand">SELECT FullDate, DateSK FROM dbo.DimDate</property>
+                  </properties>
+                </component>
+
+                <!-- Derived: calculated measures -->
+                <component name="Calculate Measures" componentClassID="Microsoft.DerivedColumn">
+                  <outputs>
+                    <output name="Derived Column Output">
+                      <outputColumns>
+                        <outputColumn name="LineTotal" dataType="numeric" precision="18" scale="2" />
+                        <outputColumn name="NetAmount" dataType="numeric" precision="18" scale="2" />
+                        <outputColumn name="ShipDays" dataType="i4" />
+                      </outputColumns>
+                    </output>
+                  </outputs>
+                </component>
+
+                <!-- Conditional Split: valid vs error rows -->
+                <component name="Validate Rows" componentClassID="Microsoft.ConditionalSplit">
+                </component>
+
+                <!-- Destination: Fact table -->
+                <component name="Fact Sales Destination" componentClassID="Microsoft.OLEDBDestination">
+                  <properties>
+                    <property name="OpenRowset">dbo.Fact_Sales</property>
+                  </properties>
+                  <inputs>
+                    <input name="OLE DB Destination Input">
+                      <inputColumns>
+                        <inputColumn name="CustomerSK" />
+                        <inputColumn name="ProductSK" />
+                        <inputColumn name="DateSK" />
+                        <inputColumn name="OrderLineID" />
+                        <inputColumn name="Quantity" />
+                        <inputColumn name="UnitPrice" />
+                        <inputColumn name="Discount" />
+                        <inputColumn name="LineTotal" />
+                        <inputColumn name="NetAmount" />
+                      </inputColumns>
+                    </input>
+                  </inputs>
+                </component>
+
+                <!-- Error rows to flat file -->
+                <component name="Error Row Output" componentClassID="Microsoft.FlatFileDestination">
+                  <properties>
+                    <property name="ConnectionManagerID">{05000000-0001-0000-0000-000000000013}</property>
+                  </properties>
+                </component>
+              </components>
+
+              <paths>
+                <path startId="Order Lines Source.Outputs[OLE DB Source Output]"
+                      endId="Lookup CustomerSK.Inputs[Lookup Input]" />
+                <path startId="Lookup CustomerSK.Outputs[Lookup Match Output]"
+                      endId="Lookup ProductSK.Inputs[Lookup Input]" />
+                <path startId="Lookup ProductSK.Outputs[Lookup Match Output]"
+                      endId="Lookup DateSK.Inputs[Lookup Input]" />
+                <path startId="Lookup DateSK.Outputs[Lookup Match Output]"
+                      endId="Calculate Measures.Inputs[Derived Column Default Input]" />
+                <path startId="Calculate Measures.Outputs[Derived Column Output]"
+                      endId="Validate Rows.Inputs[Conditional Split Default Input]" />
+                <path startId="Validate Rows.Outputs[Valid Rows]"
+                      endId="Fact Sales Destination.Inputs[OLE DB Destination Input]" />
+                <path startId="Validate Rows.Outputs[Error Rows]"
+                      endId="Error Row Output.Inputs[Flat File Destination Input]" />
+              </paths>
+            </pipeline>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- Data Flow 2: Returns -->
+        <DTS:Executable
+          DTS:ObjectName="Load Returns"
+          DTS:DTSID="{05000000-0001-0000-0000-000000000111}"
+          DTS:CreationName="Microsoft.Pipeline"
+          DTS:Description="Load return/refund transactions">
+          <DTS:ObjectData>
+            <pipeline version="1">
+              <components>
+                <component name="Returns Source" componentClassID="Microsoft.OLEDBSource">
+                  <properties>
+                    <property name="SqlCommand">SELECT ReturnID, OrderID, OrderLineID, ReturnDate, Reason, RefundAmount FROM dbo.Returns WHERE ReturnDate >= ?</property>
+                  </properties>
+                  <outputs>
+                    <output name="OLE DB Source Output">
+                      <outputColumns>
+                        <outputColumn name="ReturnID" dataType="i4" />
+                        <outputColumn name="OrderID" dataType="i4" />
+                        <outputColumn name="OrderLineID" dataType="i4" />
+                        <outputColumn name="ReturnDate" dataType="dbTimeStamp" />
+                        <outputColumn name="Reason" dataType="str" length="200" />
+                        <outputColumn name="RefundAmount" dataType="numeric" precision="18" scale="2" />
+                      </outputColumns>
+                    </output>
+                  </outputs>
+                </component>
+
+                <component name="Returns Destination" componentClassID="Microsoft.OLEDBDestination">
+                  <properties>
+                    <property name="OpenRowset">dbo.Stg_Returns</property>
+                  </properties>
+                  <inputs>
+                    <input name="OLE DB Destination Input">
+                      <inputColumns>
+                        <inputColumn name="ReturnID" />
+                        <inputColumn name="OrderID" />
+                        <inputColumn name="OrderLineID" />
+                        <inputColumn name="ReturnDate" />
+                        <inputColumn name="Reason" />
+                        <inputColumn name="RefundAmount" />
+                      </inputColumns>
+                    </input>
+                  </inputs>
+                </component>
+              </components>
+
+              <paths>
+                <path startId="Returns Source.Outputs[OLE DB Source Output]"
+                      endId="Returns Destination.Inputs[OLE DB Destination Input]" />
+              </paths>
+            </pipeline>
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:Executable>
+
+    <!-- Step 3: Merge returns into fact table -->
+    <DTS:Executable
+      DTS:ObjectName="Merge Returns into Fact"
+      DTS:DTSID="{05000000-0001-0000-0000-000000000102}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Update fact table with return/refund data">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{05000000-0001-0000-0000-000000000012}"
+          SQLTask:SqlStatementSource="EXEC dbo.sp_MergeReturnsIntoFact" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 4: Rebuild indexes -->
+    <DTS:Executable
+      DTS:ObjectName="Rebuild Fact Indexes"
+      DTS:DTSID="{05000000-0001-0000-0000-000000000103}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Rebuild clustered columnstore index">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{05000000-0001-0000-0000-000000000012}"
+          SQLTask:SqlStatementSource="ALTER INDEX CCI_Fact_Sales ON dbo.Fact_Sales REORGANIZE" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 5: Update partition metadata -->
+    <DTS:Executable
+      DTS:ObjectName="Update Partition Stats"
+      DTS:DTSID="{05000000-0001-0000-0000-000000000104}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Update statistics on the fact table">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{05000000-0001-0000-0000-000000000012}"
+          SQLTask:SqlStatementSource="UPDATE STATISTICS dbo.Fact_Sales WITH FULLSCAN" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+  </DTS:Executables>
+
+  <!-- Precedence Constraints -->
+  <DTS:PrecedenceConstraints>
+    <DTS:PrecedenceConstraint
+      DTS:From="{05000000-0001-0000-0000-000000000100}"
+      DTS:To="{05000000-0001-0000-0000-000000000101}"
+      DTS:Value="0" />
+    <DTS:PrecedenceConstraint
+      DTS:From="{05000000-0001-0000-0000-000000000101}"
+      DTS:To="{05000000-0001-0000-0000-000000000102}"
+      DTS:Value="0" />
+    <DTS:PrecedenceConstraint
+      DTS:From="{05000000-0001-0000-0000-000000000102}"
+      DTS:To="{05000000-0001-0000-0000-000000000103}"
+      DTS:Value="0" />
+    <DTS:PrecedenceConstraint
+      DTS:From="{05000000-0001-0000-0000-000000000103}"
+      DTS:To="{05000000-0001-0000-0000-000000000104}"
+      DTS:Value="0" />
+  </DTS:PrecedenceConstraints>
+
+</DTS:Executable>

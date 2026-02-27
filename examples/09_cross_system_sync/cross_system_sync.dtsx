@@ -1,0 +1,340 @@
+<?xml version="1.0"?>
+<!--
+  Example 09 - Cross-System Synchronization
+  ============================================
+  Multi-system data sync orchestration:
+    - Extract from Oracle (via ODBC) → staging
+    - Extract from SAP (via ADO.NET) → staging 
+    - Extract from REST API via Script Task
+    - ForEach loop to process each entity type
+    - Merge/reconcile across systems
+    - Push consolidated data back to each system
+
+  Migration Target: Hybrid (DF for simple copies, Spark for transforms)
+  Complexity: HIGH
+-->
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:ObjectName="CrossSystemSync"
+  DTS:Description="Synchronize customer and product data across Oracle, SAP, and REST API"
+  DTS:CreationDate="2024-08-01T07:00:00"
+  DTS:CreatorName="IntegrationArchitect"
+  DTS:FormatVersion="8"
+  DTS:DTSID="{09000000-0001-0000-0000-000000000001}">
+
+  <!-- Connection Managers -->
+  <DTS:ConnectionManager
+    DTS:ObjectName="Oracle_ODBC"
+    DTS:DTSID="{09000000-0001-0000-0000-000000000010}"
+    DTS:CreationName="ODBC">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="DSN=OracleERP;UID=etl_user;PWD=********;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="SAP_ADO"
+    DTS:DTSID="{09000000-0001-0000-0000-000000000011}"
+    DTS:CreationName="ADO.NET">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Server=sap-hana;Database=SAPSR3;User=ETL_SVC;Password=********;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="Integration_Hub"
+    DTS:DTSID="{09000000-0001-0000-0000-000000000012}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=integration-server;Initial Catalog=IntegrationHub;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="API_HTTP"
+    DTS:DTSID="{09000000-0001-0000-0000-000000000013}"
+    DTS:CreationName="HTTP">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="https://api.partner-system.com/v2/" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <!-- Variables -->
+  <DTS:Variable DTS:ObjectName="EntityList" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String">Customer,Product,Vendor</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="CurrentEntity" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String"></DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="SyncBatchID" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="LastSyncDate" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String">1900-01-01</DTS:VariableValue>
+  </DTS:Variable>
+
+  <!-- Parameters -->
+  <DTS:PackageParameter DTS:ObjectName="SyncMode" DTS:DataType="String">
+    <DTS:Property DTS:Name="ParameterValue">Incremental</DTS:Property>
+  </DTS:PackageParameter>
+
+  <!-- Control Flow -->
+  <DTS:Executables>
+
+    <!-- Step 1: Initialize sync -->
+    <DTS:Executable
+      DTS:ObjectName="Initialize Sync"
+      DTS:DTSID="{09000000-0001-0000-0000-000000000100}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Create sync batch and get last sync watermarks">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{09000000-0001-0000-0000-000000000012}"
+          SQLTask:SqlStatementSource="EXEC sync.sp_InitializeSyncBatch @Mode = ?; SELECT SCOPE_IDENTITY() AS SyncBatchID;" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 2: Extract from Oracle -->
+    <DTS:Executable
+      DTS:ObjectName="Extract Oracle Data"
+      DTS:DTSID="{09000000-0001-0000-0000-000000000200}"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:Description="Extract changed records from Oracle ERP via ODBC">
+      <DTS:ObjectData>
+        <pipeline version="1">
+          <components>
+            <component name="Oracle Customers" componentClassID="Microsoft.OLEDBSource">
+              <properties>
+                <property name="SqlCommand">SELECT CUSTOMER_ID, FIRST_NAME, LAST_NAME, EMAIL, PHONE, ADDR_LINE1, CITY, STATE_PROV, POSTAL_CODE, COUNTRY, CUST_TYPE, CREDIT_LIMIT, LAST_UPDATE FROM HR.CUSTOMERS WHERE LAST_UPDATE > TO_DATE(?, 'YYYY-MM-DD')</property>
+              </properties>
+              <outputs>
+                <output name="OLE DB Source Output">
+                  <outputColumns>
+                    <outputColumn name="CUSTOMER_ID" dataType="i4" />
+                    <outputColumn name="FIRST_NAME" dataType="str" length="50" />
+                    <outputColumn name="LAST_NAME" dataType="str" length="50" />
+                    <outputColumn name="EMAIL" dataType="str" length="100" />
+                    <outputColumn name="PHONE" dataType="str" length="20" />
+                    <outputColumn name="ADDR_LINE1" dataType="str" length="200" />
+                    <outputColumn name="CITY" dataType="str" length="100" />
+                    <outputColumn name="STATE_PROV" dataType="str" length="50" />
+                    <outputColumn name="POSTAL_CODE" dataType="str" length="10" />
+                    <outputColumn name="COUNTRY" dataType="str" length="50" />
+                    <outputColumn name="CUST_TYPE" dataType="str" length="20" />
+                    <outputColumn name="CREDIT_LIMIT" dataType="numeric" precision="18" scale="2" />
+                    <outputColumn name="LAST_UPDATE" dataType="dbTimeStamp" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <!-- Standardize Oracle column names -->
+            <component name="Standardize Oracle Cols" componentClassID="Microsoft.DerivedColumn">
+              <outputs>
+                <output name="Derived Column Output">
+                  <outputColumns>
+                    <outputColumn name="SourceSystem" dataType="str" length="10" />
+                    <outputColumn name="SourceID" dataType="str" length="50" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <component name="Oracle Staging Dest" componentClassID="Microsoft.OLEDBDestination">
+              <properties>
+                <property name="OpenRowset">stg.Oracle_Customers</property>
+              </properties>
+              <inputs>
+                <input name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn name="CUSTOMER_ID" />
+                    <inputColumn name="FIRST_NAME" />
+                    <inputColumn name="LAST_NAME" />
+                    <inputColumn name="EMAIL" />
+                    <inputColumn name="SourceSystem" />
+                  </inputColumns>
+                </input>
+              </inputs>
+            </component>
+          </components>
+
+          <paths>
+            <path startId="Oracle Customers.Outputs[OLE DB Source Output]"
+                  endId="Standardize Oracle Cols.Inputs[Derived Column Default Input]" />
+            <path startId="Standardize Oracle Cols.Outputs[Derived Column Output]"
+                  endId="Oracle Staging Dest.Inputs[OLE DB Destination Input]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 3: Extract from SAP -->
+    <DTS:Executable
+      DTS:ObjectName="Extract SAP Data"
+      DTS:DTSID="{09000000-0001-0000-0000-000000000300}"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:Description="Extract changed records from SAP HANA via ADO.NET">
+      <DTS:ObjectData>
+        <pipeline version="1">
+          <components>
+            <component name="SAP Customers" componentClassID="Microsoft.ADONETSource">
+              <properties>
+                <property name="SqlCommand">SELECT KUNNR AS SAPCustomerID, NAME1 AS CustomerName, SMTP_ADDR AS Email, TELF1 AS Phone, STRAS AS Street, ORT01 AS City, REGIO AS Region, PSTLZ AS PostalCode, LAND1 AS Country, KTOKD AS AccountGroup FROM KNA1 WHERE ERDAT > ?</property>
+              </properties>
+              <outputs>
+                <output name="ADO NET Source Output">
+                  <outputColumns>
+                    <outputColumn name="SAPCustomerID" dataType="str" length="10" />
+                    <outputColumn name="CustomerName" dataType="str" length="100" />
+                    <outputColumn name="Email" dataType="str" length="100" />
+                    <outputColumn name="Phone" dataType="str" length="20" />
+                    <outputColumn name="Street" dataType="str" length="200" />
+                    <outputColumn name="City" dataType="str" length="100" />
+                    <outputColumn name="Region" dataType="str" length="50" />
+                    <outputColumn name="PostalCode" dataType="str" length="10" />
+                    <outputColumn name="Country" dataType="str" length="50" />
+                    <outputColumn name="AccountGroup" dataType="str" length="10" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <component name="SAP Staging Dest" componentClassID="Microsoft.OLEDBDestination">
+              <properties>
+                <property name="OpenRowset">stg.SAP_Customers</property>
+              </properties>
+            </component>
+          </components>
+
+          <paths>
+            <path startId="SAP Customers.Outputs[ADO NET Source Output]"
+                  endId="SAP Staging Dest.Inputs[OLE DB Destination Input]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 4: Script Task - call REST API -->
+    <DTS:Executable
+      DTS:ObjectName="Fetch API Data"
+      DTS:DTSID="{09000000-0001-0000-0000-000000000400}"
+      DTS:CreationName="Microsoft.ScriptTask"
+      DTS:Description="Call partner REST API to get customer updates, parse JSON, and insert into staging">
+    </DTS:Executable>
+
+    <!-- Step 5: ForEach Loop - Process each entity -->
+    <DTS:Executable
+      DTS:ObjectName="Process Each Entity"
+      DTS:DTSID="{09000000-0001-0000-0000-000000000500}"
+      DTS:CreationName="STOCK:FOREACHLOOP"
+      DTS:Description="Iterate over entity types (Customer, Product, Vendor) for reconciliation">
+
+      <DTS:Executables>
+        <!-- Reconcile current entity -->
+        <DTS:Executable
+          DTS:ObjectName="Reconcile Entity"
+          DTS:DTSID="{09000000-0001-0000-0000-000000000510}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask"
+          DTS:Description="Match and merge records from all sources for this entity type">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{09000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="EXEC sync.sp_ReconcileEntity @EntityType = ?, @SyncBatchID = ?" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- Generate xref mappings -->
+        <DTS:Executable
+          DTS:ObjectName="Update XRef Mappings"
+          DTS:DTSID="{09000000-0001-0000-0000-000000000511}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask"
+          DTS:Description="Update cross-reference mappings between systems">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{09000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="EXEC sync.sp_UpdateCrossReferences @EntityType = ?, @SyncBatchID = ?" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:Executable>
+
+    <!-- Step 6: Push consolidated data back -->
+    <DTS:Executable
+      DTS:ObjectName="Publish Consolidated Data"
+      DTS:DTSID="{09000000-0001-0000-0000-000000000600}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Publish master data to subscriber systems">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{09000000-0001-0000-0000-000000000012}"
+          SQLTask:SqlStatementSource="EXEC sync.sp_PublishMasterData @SyncBatchID = ?" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 7: Notification script -->
+    <DTS:Executable
+      DTS:ObjectName="Send Sync Report"
+      DTS:DTSID="{09000000-0001-0000-0000-000000000700}"
+      DTS:CreationName="Microsoft.ScriptTask"
+      DTS:Description="Generate HTML sync report and email to stakeholders">
+    </DTS:Executable>
+
+    <!-- Step 8: Finalize -->
+    <DTS:Executable
+      DTS:ObjectName="Finalize Sync"
+      DTS:DTSID="{09000000-0001-0000-0000-000000000800}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Update sync batch status and watermarks">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{09000000-0001-0000-0000-000000000012}"
+          SQLTask:SqlStatementSource="EXEC sync.sp_FinalizeSyncBatch @SyncBatchID = ?, @Status = 'Success'" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+  </DTS:Executables>
+
+  <!-- Precedence Constraints -->
+  <DTS:PrecedenceConstraints>
+    <DTS:PrecedenceConstraint DTS:From="{09000000-0001-0000-0000-000000000100}" DTS:To="{09000000-0001-0000-0000-000000000200}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{09000000-0001-0000-0000-000000000100}" DTS:To="{09000000-0001-0000-0000-000000000300}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{09000000-0001-0000-0000-000000000100}" DTS:To="{09000000-0001-0000-0000-000000000400}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{09000000-0001-0000-0000-000000000200}" DTS:To="{09000000-0001-0000-0000-000000000500}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{09000000-0001-0000-0000-000000000300}" DTS:To="{09000000-0001-0000-0000-000000000500}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{09000000-0001-0000-0000-000000000400}" DTS:To="{09000000-0001-0000-0000-000000000500}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{09000000-0001-0000-0000-000000000500}" DTS:To="{09000000-0001-0000-0000-000000000600}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{09000000-0001-0000-0000-000000000600}" DTS:To="{09000000-0001-0000-0000-000000000700}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{09000000-0001-0000-0000-000000000700}" DTS:To="{09000000-0001-0000-0000-000000000800}" DTS:Value="0" />
+  </DTS:PrecedenceConstraints>
+
+  <!-- Event Handlers -->
+  <DTS:EventHandlers>
+    <DTS:EventHandler DTS:EventName="OnError">
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:ObjectName="Log Sync Error"
+          DTS:DTSID="{09000000-0001-0000-0000-000000000900}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{09000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="EXEC sync.sp_LogSyncError @SyncBatchID = ?, @TaskName = ?, @ErrorCode = ?, @ErrorMessage = ?" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:EventHandler>
+  </DTS:EventHandlers>
+
+</DTS:Executable>

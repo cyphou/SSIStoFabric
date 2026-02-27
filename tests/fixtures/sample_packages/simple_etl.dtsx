@@ -1,0 +1,148 @@
+<?xml version="1.0"?>
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:ObjectName="SampleETLPackage"
+  DTS:Description="A sample SSIS package for testing migration"
+  DTS:CreationDate="2024-01-15T10:30:00"
+  DTS:CreatorName="TestUser"
+  DTS:FormatVersion="8"
+  DTS:DTSID="{AAA00000-0000-0000-0000-000000000001}">
+
+  <!-- Connection Managers -->
+  <DTS:ConnectionManager
+    DTS:ObjectName="SourceDB_OLEDB"
+    DTS:DTSID="{BBB00000-0000-0000-0000-000000000001}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=source-server;Initial Catalog=SourceDB;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="DestDB_OLEDB"
+    DTS:DTSID="{BBB00000-0000-0000-0000-000000000002}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=dest-server;Initial Catalog=DestDB;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <!-- Variables -->
+  <DTS:Variable DTS:ObjectName="BatchDate" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String">2024-01-15</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="RowCount" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <!-- Control Flow -->
+  <DTS:Executables>
+    <!-- Execute SQL Task: Truncate staging -->
+    <DTS:Executable
+      DTS:ObjectName="Truncate Staging Table"
+      DTS:DTSID="{CCC00000-0000-0000-0000-000000000001}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Clear staging table before load">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{BBB00000-0000-0000-0000-000000000002}"
+          SQLTask:SqlStatementSource="TRUNCATE TABLE dbo.Staging_Customers" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Data Flow Task: Load Customers -->
+    <DTS:Executable
+      DTS:ObjectName="Load Customers"
+      DTS:DTSID="{CCC00000-0000-0000-0000-000000000002}"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:Description="Load customer data from source to staging">
+      <DTS:ObjectData>
+        <pipeline version="1">
+          <components>
+            <component name="OLE DB Source" componentClassID="Microsoft.OLEDBSource">
+              <properties>
+                <property name="SqlCommand">SELECT CustomerID, FirstName, LastName, Email, CreatedDate FROM dbo.Customers WHERE ModifiedDate >= ?</property>
+              </properties>
+              <outputs>
+                <output name="OLE DB Source Output">
+                  <outputColumns>
+                    <outputColumn name="CustomerID" dataType="i4" />
+                    <outputColumn name="FirstName" dataType="str" length="50" />
+                    <outputColumn name="LastName" dataType="str" length="50" />
+                    <outputColumn name="Email" dataType="str" length="100" />
+                    <outputColumn name="CreatedDate" dataType="dbTimeStamp" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <component name="Derived Column - FullName" componentClassID="Microsoft.DerivedColumn">
+              <outputs>
+                <output name="Derived Column Output">
+                  <outputColumns>
+                    <outputColumn name="FullName" dataType="str" length="101" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <component name="OLE DB Destination" componentClassID="Microsoft.OLEDBDestination">
+              <properties>
+                <property name="OpenRowset">dbo.Staging_Customers</property>
+              </properties>
+              <inputs>
+                <input name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn name="CustomerID" />
+                    <inputColumn name="FirstName" />
+                    <inputColumn name="LastName" />
+                    <inputColumn name="FullName" />
+                    <inputColumn name="Email" />
+                    <inputColumn name="CreatedDate" />
+                  </inputColumns>
+                </input>
+              </inputs>
+            </component>
+          </components>
+
+          <paths>
+            <path startId="OLE DB Source.Outputs[OLE DB Source Output]"
+                  endId="Derived Column - FullName.Inputs[Derived Column Default Input]" />
+            <path startId="Derived Column - FullName.Outputs[Derived Column Output]"
+                  endId="OLE DB Destination.Inputs[OLE DB Destination Input]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Execute SQL Task: Update audit log -->
+    <DTS:Executable
+      DTS:ObjectName="Update Audit Log"
+      DTS:DTSID="{CCC00000-0000-0000-0000-000000000003}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Record load completion in audit table">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{BBB00000-0000-0000-0000-000000000002}"
+          SQLTask:SqlStatementSource="EXEC dbo.sp_UpdateAuditLog @PackageName = 'SampleETLPackage', @Status = 'Complete'" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+  </DTS:Executables>
+
+  <!-- Precedence Constraints -->
+  <DTS:PrecedenceConstraints>
+    <DTS:PrecedenceConstraint
+      DTS:From="{CCC00000-0000-0000-0000-000000000001}"
+      DTS:To="{CCC00000-0000-0000-0000-000000000002}"
+      DTS:Value="0" />
+    <DTS:PrecedenceConstraint
+      DTS:From="{CCC00000-0000-0000-0000-000000000002}"
+      DTS:To="{CCC00000-0000-0000-0000-000000000003}"
+      DTS:Value="0" />
+  </DTS:PrecedenceConstraints>
+
+</DTS:Executable>

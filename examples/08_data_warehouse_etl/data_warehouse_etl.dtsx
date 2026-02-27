@@ -1,0 +1,535 @@
+<?xml version="1.0"?>
+<!--
+  Example 08 - Full Data Warehouse ETL
+  ======================================
+  Complete star-schema DW load orchestrating:
+    - Dimension loads (Date, Product, Customer, Store) in a Sequence Container
+    - Fact loads (Sales, Inventory) sequentially after dimensions
+    - Aggregation table refresh
+    - Index/stats maintenance
+    - Full audit trail
+
+  Migration Target: Hybrid (dimensions → DF, complex facts → Spark)
+  Complexity: HIGH
+-->
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:ObjectName="DataWarehouseETL"
+  DTS:Description="Full nightly data warehouse load for star schema with 4 dimensions and 2 facts"
+  DTS:CreationDate="2024-07-15T06:00:00"
+  DTS:CreatorName="DWArchitect"
+  DTS:FormatVersion="8"
+  DTS:DTSID="{08000000-0001-0000-0000-000000000001}">
+
+  <!-- Connection Managers -->
+  <DTS:ConnectionManager
+    DTS:ObjectName="OLTP_Source"
+    DTS:DTSID="{08000000-0001-0000-0000-000000000010}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=oltp-prod;Initial Catalog=RetailDB;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="DW_Target"
+    DTS:DTSID="{08000000-0001-0000-0000-000000000011}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=dw-prod;Initial Catalog=RetailDW;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="SMTP_Notification"
+    DTS:DTSID="{08000000-0001-0000-0000-000000000012}"
+    DTS:CreationName="SMTP">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="SmtpServer=smtp.corp.local;UseWindowsAuthentication=True;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <!-- Variables -->
+  <DTS:Variable DTS:ObjectName="ETLBatchID" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="LoadStartTime" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String">1900-01-01</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="DimProductRows" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="DimCustomerRows" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="FactSalesRows" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <!-- Parameters -->
+  <DTS:PackageParameter DTS:ObjectName="Environment" DTS:DataType="String">
+    <DTS:Property DTS:Name="ParameterValue">Production</DTS:Property>
+  </DTS:PackageParameter>
+
+  <DTS:PackageParameter DTS:ObjectName="ForceFullLoad" DTS:DataType="Boolean">
+    <DTS:Property DTS:Name="ParameterValue">False</DTS:Property>
+  </DTS:PackageParameter>
+
+  <!-- Control Flow -->
+  <DTS:Executables>
+
+    <!-- Step 1: Initialize ETL batch -->
+    <DTS:Executable
+      DTS:ObjectName="Initialize ETL Batch"
+      DTS:DTSID="{08000000-0001-0000-0000-000000000100}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Create a new ETL batch and get watermarks">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{08000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="EXEC etl.sp_InitializeBatch @PackageName = 'DataWarehouseETL', @Environment = ?" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 2: Load Dimensions (parallel in Sequence Container) -->
+    <DTS:Executable
+      DTS:ObjectName="Load All Dimensions"
+      DTS:DTSID="{08000000-0001-0000-0000-000000000200}"
+      DTS:CreationName="STOCK:SEQUENCE"
+      DTS:Description="Load all dimension tables in parallel">
+
+      <DTS:Executables>
+        <!-- DimDate: typically a static load or generate -->
+        <DTS:Executable
+          DTS:ObjectName="Load DimDate"
+          DTS:DTSID="{08000000-0001-0000-0000-000000000210}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask"
+          DTS:Description="Ensure DimDate has all required dates">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{08000000-0001-0000-0000-000000000011}"
+              SQLTask:SqlStatementSource="EXEC dim.sp_PopulateDateDimension @StartDate = '2020-01-01', @EndDate = '2030-12-31'" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- DimProduct: full load with derived columns -->
+        <DTS:Executable
+          DTS:ObjectName="Load DimProduct"
+          DTS:DTSID="{08000000-0001-0000-0000-000000000211}"
+          DTS:CreationName="Microsoft.Pipeline"
+          DTS:Description="Load product dimension from OLTP catalog">
+          <DTS:ObjectData>
+            <pipeline version="1">
+              <components>
+                <component name="Product Source" componentClassID="Microsoft.OLEDBSource">
+                  <properties>
+                    <property name="SqlCommand">SELECT p.ProductID, p.ProductName, p.SKU, c.CategoryName, sc.SubCategoryName, p.UnitPrice, p.UnitCost, p.Weight, p.IsActive, p.LaunchDate FROM dbo.Product p INNER JOIN dbo.Category c ON p.CategoryID = c.CategoryID INNER JOIN dbo.SubCategory sc ON p.SubCategoryID = sc.SubCategoryID</property>
+                  </properties>
+                  <outputs>
+                    <output name="OLE DB Source Output">
+                      <outputColumns>
+                        <outputColumn name="ProductID" dataType="i4" />
+                        <outputColumn name="ProductName" dataType="str" length="200" />
+                        <outputColumn name="SKU" dataType="str" length="20" />
+                        <outputColumn name="CategoryName" dataType="str" length="50" />
+                        <outputColumn name="SubCategoryName" dataType="str" length="50" />
+                        <outputColumn name="UnitPrice" dataType="numeric" precision="18" scale="2" />
+                        <outputColumn name="UnitCost" dataType="numeric" precision="18" scale="2" />
+                        <outputColumn name="Weight" dataType="numeric" precision="10" scale="3" />
+                        <outputColumn name="IsActive" dataType="bool" />
+                        <outputColumn name="LaunchDate" dataType="dbTimeStamp" />
+                      </outputColumns>
+                    </output>
+                  </outputs>
+                </component>
+
+                <component name="Calculate Margin" componentClassID="Microsoft.DerivedColumn">
+                  <outputs>
+                    <output name="Derived Column Output">
+                      <outputColumns>
+                        <outputColumn name="ProfitMargin" dataType="numeric" precision="5" scale="2" />
+                        <outputColumn name="PriceRange" dataType="str" length="20" />
+                      </outputColumns>
+                    </output>
+                  </outputs>
+                </component>
+
+                <component name="DimProduct Dest" componentClassID="Microsoft.OLEDBDestination">
+                  <properties>
+                    <property name="OpenRowset">dim.DimProduct_Staging</property>
+                  </properties>
+                  <inputs>
+                    <input name="OLE DB Destination Input">
+                      <inputColumns>
+                        <inputColumn name="ProductID" />
+                        <inputColumn name="ProductName" />
+                        <inputColumn name="SKU" />
+                        <inputColumn name="CategoryName" />
+                        <inputColumn name="SubCategoryName" />
+                        <inputColumn name="UnitPrice" />
+                        <inputColumn name="UnitCost" />
+                        <inputColumn name="ProfitMargin" />
+                        <inputColumn name="PriceRange" />
+                        <inputColumn name="IsActive" />
+                      </inputColumns>
+                    </input>
+                  </inputs>
+                </component>
+              </components>
+
+              <paths>
+                <path startId="Product Source.Outputs[OLE DB Source Output]"
+                      endId="Calculate Margin.Inputs[Derived Column Default Input]" />
+                <path startId="Calculate Margin.Outputs[Derived Column Output]"
+                      endId="DimProduct Dest.Inputs[OLE DB Destination Input]" />
+              </paths>
+            </pipeline>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- DimCustomer: incremental with lookup -->
+        <DTS:Executable
+          DTS:ObjectName="Load DimCustomer"
+          DTS:DTSID="{08000000-0001-0000-0000-000000000212}"
+          DTS:CreationName="Microsoft.Pipeline"
+          DTS:Description="Incremental customer dimension load with geography lookup">
+          <DTS:ObjectData>
+            <pipeline version="1">
+              <components>
+                <component name="Customer Source" componentClassID="Microsoft.OLEDBSource">
+                  <properties>
+                    <property name="SqlCommand">SELECT CustomerID, FirstName, LastName, Email, Phone, City, State, ZipCode, Country, CustomerSegment, JoinDate FROM dbo.Customer WHERE ModifiedDate > ?</property>
+                  </properties>
+                  <outputs>
+                    <output name="OLE DB Source Output">
+                      <outputColumns>
+                        <outputColumn name="CustomerID" dataType="i4" />
+                        <outputColumn name="FirstName" dataType="str" length="50" />
+                        <outputColumn name="LastName" dataType="str" length="50" />
+                        <outputColumn name="Email" dataType="str" length="100" />
+                        <outputColumn name="Phone" dataType="str" length="20" />
+                        <outputColumn name="City" dataType="str" length="100" />
+                        <outputColumn name="State" dataType="str" length="50" />
+                        <outputColumn name="ZipCode" dataType="str" length="10" />
+                        <outputColumn name="Country" dataType="str" length="50" />
+                        <outputColumn name="CustomerSegment" dataType="str" length="20" />
+                        <outputColumn name="JoinDate" dataType="dbTimeStamp" />
+                      </outputColumns>
+                    </output>
+                  </outputs>
+                </component>
+
+                <component name="Lookup GeographySK" componentClassID="Microsoft.Lookup">
+                  <properties>
+                    <property name="SqlCommand">SELECT City, State, Country, GeographySK FROM dim.DimGeography</property>
+                  </properties>
+                </component>
+
+                <component name="Derive FullName" componentClassID="Microsoft.DerivedColumn">
+                  <outputs>
+                    <output name="Derived Column Output">
+                      <outputColumns>
+                        <outputColumn name="FullName" dataType="str" length="101" />
+                      </outputColumns>
+                    </output>
+                  </outputs>
+                </component>
+
+                <component name="DimCustomer Dest" componentClassID="Microsoft.OLEDBDestination">
+                  <properties>
+                    <property name="OpenRowset">dim.DimCustomer_Staging</property>
+                  </properties>
+                  <inputs>
+                    <input name="OLE DB Destination Input">
+                      <inputColumns>
+                        <inputColumn name="CustomerID" />
+                        <inputColumn name="FullName" />
+                        <inputColumn name="Email" />
+                        <inputColumn name="Phone" />
+                        <inputColumn name="GeographySK" />
+                        <inputColumn name="CustomerSegment" />
+                        <inputColumn name="JoinDate" />
+                      </inputColumns>
+                    </input>
+                  </inputs>
+                </component>
+              </components>
+
+              <paths>
+                <path startId="Customer Source.Outputs[OLE DB Source Output]"
+                      endId="Lookup GeographySK.Inputs[Lookup Input]" />
+                <path startId="Lookup GeographySK.Outputs[Lookup Match Output]"
+                      endId="Derive FullName.Inputs[Derived Column Default Input]" />
+                <path startId="Derive FullName.Outputs[Derived Column Output]"
+                      endId="DimCustomer Dest.Inputs[OLE DB Destination Input]" />
+              </paths>
+            </pipeline>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- DimStore: simple copy -->
+        <DTS:Executable
+          DTS:ObjectName="Load DimStore"
+          DTS:DTSID="{08000000-0001-0000-0000-000000000213}"
+          DTS:CreationName="Microsoft.Pipeline"
+          DTS:Description="Full load of store dimension">
+          <DTS:ObjectData>
+            <pipeline version="1">
+              <components>
+                <component name="Store Source" componentClassID="Microsoft.OLEDBSource">
+                  <properties>
+                    <property name="SqlCommand">SELECT StoreID, StoreName, StoreType, Region, District, Manager, OpenDate, SquareFootage FROM dbo.Store WHERE IsOpen = 1</property>
+                  </properties>
+                </component>
+
+                <component name="DimStore Dest" componentClassID="Microsoft.OLEDBDestination">
+                  <properties>
+                    <property name="OpenRowset">dim.DimStore</property>
+                  </properties>
+                </component>
+              </components>
+
+              <paths>
+                <path startId="Store Source.Outputs[OLE DB Source Output]"
+                      endId="DimStore Dest.Inputs[OLE DB Destination Input]" />
+              </paths>
+            </pipeline>
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:Executable>
+
+    <!-- Step 3: Merge dimension staging into live -->
+    <DTS:Executable
+      DTS:ObjectName="Merge Dimensions"
+      DTS:DTSID="{08000000-0001-0000-0000-000000000300}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Apply SCD logic to all dimensions from staging">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{08000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="EXEC dim.sp_MergeAllDimensions @BatchID = ?" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 4: Load Fact Tables -->
+    <DTS:Executable
+      DTS:ObjectName="Load Fact Tables"
+      DTS:DTSID="{08000000-0001-0000-0000-000000000400}"
+      DTS:CreationName="STOCK:SEQUENCE"
+      DTS:Description="Load all fact tables after dimensions are ready">
+
+      <DTS:Executables>
+        <!-- Fact_Sales with all dimension lookups -->
+        <DTS:Executable
+          DTS:ObjectName="Load Fact_Sales"
+          DTS:DTSID="{08000000-0001-0000-0000-000000000410}"
+          DTS:CreationName="Microsoft.Pipeline"
+          DTS:Description="Load sales fact with dimension key lookups and calculated measures">
+          <DTS:ObjectData>
+            <pipeline version="1">
+              <components>
+                <component name="Sales Source" componentClassID="Microsoft.OLEDBSource">
+                  <properties>
+                    <property name="SqlCommand">SELECT s.SaleID, s.OrderDate, s.CustomerID, s.ProductID, s.StoreID, s.Quantity, s.UnitPrice, s.Discount, s.TaxAmount FROM dbo.Sale s WHERE s.OrderDate > ?</property>
+                  </properties>
+                </component>
+
+                <component name="Lookup DateSK" componentClassID="Microsoft.Lookup">
+                  <properties>
+                    <property name="SqlCommand">SELECT FullDate, DateSK FROM dim.DimDate</property>
+                  </properties>
+                </component>
+
+                <component name="Lookup CustomerSK" componentClassID="Microsoft.Lookup">
+                  <properties>
+                    <property name="SqlCommand">SELECT CustomerID, CustomerSK FROM dim.DimCustomer WHERE IsCurrent = 1</property>
+                  </properties>
+                </component>
+
+                <component name="Lookup ProductSK" componentClassID="Microsoft.Lookup">
+                  <properties>
+                    <property name="SqlCommand">SELECT ProductID, ProductSK FROM dim.DimProduct WHERE IsCurrent = 1</property>
+                  </properties>
+                </component>
+
+                <component name="Calculate Amounts" componentClassID="Microsoft.DerivedColumn">
+                  <outputs>
+                    <output name="Derived Column Output">
+                      <outputColumns>
+                        <outputColumn name="GrossAmount" dataType="numeric" precision="18" scale="2" />
+                        <outputColumn name="NetAmount" dataType="numeric" precision="18" scale="2" />
+                        <outputColumn name="DiscountAmount" dataType="numeric" precision="18" scale="2" />
+                      </outputColumns>
+                    </output>
+                  </outputs>
+                </component>
+
+                <component name="Fact_Sales Dest" componentClassID="Microsoft.OLEDBDestination">
+                  <properties>
+                    <property name="OpenRowset">fact.Fact_Sales</property>
+                  </properties>
+                  <inputs>
+                    <input name="OLE DB Destination Input">
+                      <inputColumns>
+                        <inputColumn name="DateSK" />
+                        <inputColumn name="CustomerSK" />
+                        <inputColumn name="ProductSK" />
+                        <inputColumn name="StoreID" />
+                        <inputColumn name="Quantity" />
+                        <inputColumn name="GrossAmount" />
+                        <inputColumn name="DiscountAmount" />
+                        <inputColumn name="NetAmount" />
+                        <inputColumn name="TaxAmount" />
+                      </inputColumns>
+                    </input>
+                  </inputs>
+                </component>
+              </components>
+
+              <paths>
+                <path startId="Sales Source.Outputs[OLE DB Source Output]"
+                      endId="Lookup DateSK.Inputs[Lookup Input]" />
+                <path startId="Lookup DateSK.Outputs[Lookup Match Output]"
+                      endId="Lookup CustomerSK.Inputs[Lookup Input]" />
+                <path startId="Lookup CustomerSK.Outputs[Lookup Match Output]"
+                      endId="Lookup ProductSK.Inputs[Lookup Input]" />
+                <path startId="Lookup ProductSK.Outputs[Lookup Match Output]"
+                      endId="Calculate Amounts.Inputs[Derived Column Default Input]" />
+                <path startId="Calculate Amounts.Outputs[Derived Column Output]"
+                      endId="Fact_Sales Dest.Inputs[OLE DB Destination Input]" />
+              </paths>
+            </pipeline>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- Fact_Inventory: simple snapshot -->
+        <DTS:Executable
+          DTS:ObjectName="Load Fact_Inventory"
+          DTS:DTSID="{08000000-0001-0000-0000-000000000411}"
+          DTS:CreationName="Microsoft.Pipeline"
+          DTS:Description="Daily inventory snapshot">
+          <DTS:ObjectData>
+            <pipeline version="1">
+              <components>
+                <component name="Inventory Source" componentClassID="Microsoft.OLEDBSource">
+                  <properties>
+                    <property name="SqlCommand">SELECT ProductID, StoreID, QuantityOnHand, QuantityOnOrder, ReorderPoint, CAST(GETDATE() AS DATE) AS SnapshotDate FROM dbo.Inventory</property>
+                  </properties>
+                </component>
+
+                <component name="Fact_Inventory Dest" componentClassID="Microsoft.OLEDBDestination">
+                  <properties>
+                    <property name="OpenRowset">fact.Fact_Inventory</property>
+                  </properties>
+                </component>
+              </components>
+
+              <paths>
+                <path startId="Inventory Source.Outputs[OLE DB Source Output]"
+                      endId="Fact_Inventory Dest.Inputs[OLE DB Destination Input]" />
+              </paths>
+            </pipeline>
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:Executable>
+
+    <!-- Step 5: Refresh aggregation tables -->
+    <DTS:Executable
+      DTS:ObjectName="Refresh Aggregates"
+      DTS:DTSID="{08000000-0001-0000-0000-000000000500}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Rebuild pre-aggregated reporting tables">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{08000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="EXEC rpt.sp_RefreshDailySummary; EXEC rpt.sp_RefreshMonthlySummary;" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 6: Maintenance -->
+    <DTS:Executable
+      DTS:ObjectName="Index Maintenance"
+      DTS:DTSID="{08000000-0001-0000-0000-000000000600}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Reorganize columnstore indexes and update statistics">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{08000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="EXEC maint.sp_MaintainIndexes @SchemaName = 'fact'" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 7: Finalize ETL batch -->
+    <DTS:Executable
+      DTS:ObjectName="Finalize ETL Batch"
+      DTS:DTSID="{08000000-0001-0000-0000-000000000700}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Mark batch as successful with row counts">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{08000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="EXEC etl.sp_FinalizeBatch @BatchID = ?, @Status = 'Success'" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+  </DTS:Executables>
+
+  <!-- Precedence Constraints -->
+  <DTS:PrecedenceConstraints>
+    <DTS:PrecedenceConstraint DTS:From="{08000000-0001-0000-0000-000000000100}" DTS:To="{08000000-0001-0000-0000-000000000200}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{08000000-0001-0000-0000-000000000200}" DTS:To="{08000000-0001-0000-0000-000000000300}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{08000000-0001-0000-0000-000000000300}" DTS:To="{08000000-0001-0000-0000-000000000400}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{08000000-0001-0000-0000-000000000400}" DTS:To="{08000000-0001-0000-0000-000000000500}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{08000000-0001-0000-0000-000000000500}" DTS:To="{08000000-0001-0000-0000-000000000600}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{08000000-0001-0000-0000-000000000600}" DTS:To="{08000000-0001-0000-0000-000000000700}" DTS:Value="0" />
+  </DTS:PrecedenceConstraints>
+
+  <!-- Event Handlers -->
+  <DTS:EventHandlers>
+    <DTS:EventHandler DTS:EventName="OnError">
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:ObjectName="Log DW Error"
+          DTS:DTSID="{08000000-0001-0000-0000-000000000900}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{08000000-0001-0000-0000-000000000011}"
+              SQLTask:SqlStatementSource="EXEC etl.sp_LogError @BatchID = ?, @TaskName = ?, @ErrorMessage = ?" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:EventHandler>
+    <DTS:EventHandler DTS:EventName="OnPostExecute">
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:ObjectName="Log Task Completion"
+          DTS:DTSID="{08000000-0001-0000-0000-000000000901}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{08000000-0001-0000-0000-000000000011}"
+              SQLTask:SqlStatementSource="EXEC etl.sp_LogTaskCompletion @BatchID = ?, @TaskName = ?" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:EventHandler>
+  </DTS:EventHandlers>
+
+</DTS:Executable>

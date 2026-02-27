@@ -1,0 +1,274 @@
+<?xml version="1.0"?>
+<!--
+  Example 04 - Dimension Load (SCD Type 2)
+  ==========================================
+  A Slowly Changing Dimension Type 2 load for a Customer dimension:
+    1. Truncate staging
+    2. Load source data with derived columns
+    3. Apply SCD logic (new/changed/unchanged classification)
+    4. Update expired records
+    5. Insert new dimension records
+
+  Migration Target: Spark (due to SCD component)
+  Complexity: HIGH
+-->
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:ObjectName="DimensionLoadSCD2"
+  DTS:Description="SCD Type 2 Customer dimension load with history tracking"
+  DTS:CreationDate="2024-06-05T11:00:00"
+  DTS:CreatorName="DWArchitect"
+  DTS:FormatVersion="8"
+  DTS:DTSID="{04000000-0001-0000-0000-000000000001}">
+
+  <!-- Connection Managers -->
+  <DTS:ConnectionManager
+    DTS:ObjectName="CRM_Source"
+    DTS:DTSID="{04000000-0001-0000-0000-000000000010}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=crm-server;Initial Catalog=CRM_Production;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="DW_Target"
+    DTS:DTSID="{04000000-0001-0000-0000-000000000011}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=dw-server;Initial Catalog=DataWarehouse;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <!-- Variables -->
+  <DTS:Variable DTS:ObjectName="EffectiveDate" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String">2024-06-05</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="NewRows" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="UpdatedRows" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <!-- Control Flow -->
+  <DTS:Executables>
+
+    <!-- Step 1: Begin Audit -->
+    <DTS:Executable
+      DTS:ObjectName="Begin Dimension Load Audit"
+      DTS:DTSID="{04000000-0001-0000-0000-000000000100}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Record dimension load start">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{04000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="INSERT INTO dbo.DimLoadAudit (DimName, LoadStart, Status) VALUES ('DimCustomer', GETDATE(), 'Running'); SELECT SCOPE_IDENTITY() AS AuditID" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 2: Data Flow - SCD Type 2 Processing -->
+    <DTS:Executable
+      DTS:ObjectName="SCD2 Customer Load"
+      DTS:DTSID="{04000000-0001-0000-0000-000000000101}"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:Description="Slowly Changing Dimension Type 2 load with history tracking">
+      <DTS:ObjectData>
+        <pipeline version="1">
+          <components>
+            <!-- Source: extract customers from CRM -->
+            <component name="CRM Customer Source" componentClassID="Microsoft.OLEDBSource">
+              <properties>
+                <property name="SqlCommand">SELECT
+    c.CustomerID,
+    c.FirstName,
+    c.LastName,
+    c.Email,
+    c.Phone,
+    a.Street,
+    a.City,
+    a.State,
+    a.ZipCode,
+    a.Country,
+    c.CustomerType,
+    c.CreditRating,
+    c.ModifiedDate
+FROM dbo.Customer c
+INNER JOIN dbo.Address a ON c.PrimaryAddressID = a.AddressID
+WHERE c.IsDeleted = 0</property>
+              </properties>
+              <outputs>
+                <output name="OLE DB Source Output">
+                  <outputColumns>
+                    <outputColumn name="CustomerID" dataType="i4" />
+                    <outputColumn name="FirstName" dataType="str" length="50" />
+                    <outputColumn name="LastName" dataType="str" length="50" />
+                    <outputColumn name="Email" dataType="str" length="100" />
+                    <outputColumn name="Phone" dataType="str" length="20" />
+                    <outputColumn name="Street" dataType="str" length="200" />
+                    <outputColumn name="City" dataType="str" length="100" />
+                    <outputColumn name="State" dataType="str" length="50" />
+                    <outputColumn name="ZipCode" dataType="str" length="10" />
+                    <outputColumn name="Country" dataType="str" length="50" />
+                    <outputColumn name="CustomerType" dataType="str" length="20" />
+                    <outputColumn name="CreditRating" dataType="str" length="10" />
+                    <outputColumn name="ModifiedDate" dataType="dbTimeStamp" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <!-- Derive: full name and address hash for change detection -->
+            <component name="Derive Change Hash" componentClassID="Microsoft.DerivedColumn">
+              <outputs>
+                <output name="Derived Column Output">
+                  <outputColumns>
+                    <outputColumn name="FullName" dataType="str" length="101" />
+                    <outputColumn name="FullAddress" dataType="str" length="500" />
+                    <outputColumn name="ChangeHash" dataType="bytes" length="20" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <!-- SCD: classify as new, changed, or unchanged -->
+            <component name="SCD Customer" componentClassID="Microsoft.SlowlyChangingDimension">
+              <properties>
+                <property name="SqlCommand">SELECT CustomerSK, CustomerID, FullName, Email, FullAddress, CustomerType, CreditRating, ChangeHash, EffectiveFrom, EffectiveTo, IsCurrent FROM dbo.DimCustomer WHERE IsCurrent = 1</property>
+              </properties>
+            </component>
+
+            <!-- OLE DB Command: expire old records (set IsCurrent=0, EffectiveTo=today) -->
+            <component name="Expire Changed Records" componentClassID="Microsoft.OLEDBCommand">
+              <properties>
+                <property name="SqlCommand">UPDATE dbo.DimCustomer SET IsCurrent = 0, EffectiveTo = GETDATE() WHERE CustomerID = ? AND IsCurrent = 1</property>
+              </properties>
+            </component>
+
+            <!-- Destination: insert new/changed rows -->
+            <component name="Insert Dimension Records" componentClassID="Microsoft.OLEDBDestination">
+              <properties>
+                <property name="OpenRowset">dbo.DimCustomer</property>
+              </properties>
+              <inputs>
+                <input name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn name="CustomerID" />
+                    <inputColumn name="FullName" />
+                    <inputColumn name="Email" />
+                    <inputColumn name="Phone" />
+                    <inputColumn name="FullAddress" />
+                    <inputColumn name="City" />
+                    <inputColumn name="State" />
+                    <inputColumn name="Country" />
+                    <inputColumn name="CustomerType" />
+                    <inputColumn name="CreditRating" />
+                    <inputColumn name="ChangeHash" />
+                  </inputColumns>
+                </input>
+              </inputs>
+            </component>
+          </components>
+
+          <paths>
+            <path startId="CRM Customer Source.Outputs[OLE DB Source Output]"
+                  endId="Derive Change Hash.Inputs[Derived Column Default Input]" />
+            <path startId="Derive Change Hash.Outputs[Derived Column Output]"
+                  endId="SCD Customer.Inputs[SCD Input]" />
+            <path startId="SCD Customer.Outputs[Changed Attributes Output]"
+                  endId="Expire Changed Records.Inputs[OLE DB Command Input]" />
+            <path startId="SCD Customer.Outputs[New Output]"
+                  endId="Insert Dimension Records.Inputs[OLE DB Destination Input]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 3: Handle unknown member -->
+    <DTS:Executable
+      DTS:ObjectName="Ensure Unknown Member"
+      DTS:DTSID="{04000000-0001-0000-0000-000000000102}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Ensure DimCustomer has an unknown member row">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{04000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="IF NOT EXISTS (SELECT 1 FROM dbo.DimCustomer WHERE CustomerSK = -1) INSERT INTO dbo.DimCustomer (CustomerSK, CustomerID, FullName, Email, CustomerType, IsCurrent, EffectiveFrom) VALUES (-1, -1, 'Unknown', 'unknown@unknown.com', 'Unknown', 1, '1900-01-01')" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 4: Update row counts -->
+    <DTS:Executable
+      DTS:ObjectName="Capture Row Counts"
+      DTS:DTSID="{04000000-0001-0000-0000-000000000103}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Get counts for audit logging">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{04000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="SELECT COUNT(*) AS TotalRows FROM dbo.DimCustomer WHERE IsCurrent = 1" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 5: End Audit -->
+    <DTS:Executable
+      DTS:ObjectName="End Dimension Load Audit"
+      DTS:DTSID="{04000000-0001-0000-0000-000000000104}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Record dimension load completion">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{04000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="UPDATE dbo.DimLoadAudit SET LoadEnd = GETDATE(), Status = 'Success', RowsProcessed = ? WHERE AuditID = ?" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+  </DTS:Executables>
+
+  <!-- Precedence Constraints -->
+  <DTS:PrecedenceConstraints>
+    <DTS:PrecedenceConstraint
+      DTS:From="{04000000-0001-0000-0000-000000000100}"
+      DTS:To="{04000000-0001-0000-0000-000000000101}"
+      DTS:Value="0" />
+    <DTS:PrecedenceConstraint
+      DTS:From="{04000000-0001-0000-0000-000000000101}"
+      DTS:To="{04000000-0001-0000-0000-000000000102}"
+      DTS:Value="0" />
+    <DTS:PrecedenceConstraint
+      DTS:From="{04000000-0001-0000-0000-000000000102}"
+      DTS:To="{04000000-0001-0000-0000-000000000103}"
+      DTS:Value="0" />
+    <DTS:PrecedenceConstraint
+      DTS:From="{04000000-0001-0000-0000-000000000103}"
+      DTS:To="{04000000-0001-0000-0000-000000000104}"
+      DTS:Value="0" />
+  </DTS:PrecedenceConstraints>
+
+  <!-- Event Handlers -->
+  <DTS:EventHandlers>
+    <DTS:EventHandler DTS:EventName="OnError">
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:ObjectName="Mark Audit Failed"
+          DTS:DTSID="{04000000-0001-0000-0000-000000000200}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{04000000-0001-0000-0000-000000000011}"
+              SQLTask:SqlStatementSource="UPDATE dbo.DimLoadAudit SET LoadEnd = GETDATE(), Status = 'Failed', ErrorMessage = ? WHERE AuditID = ?" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:EventHandler>
+  </DTS:EventHandlers>
+
+</DTS:Executable>

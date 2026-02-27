@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SSIS:Parameters xmlns:SSIS="www.microsoft.com/SqlServer/SSIS">
+  <SSIS:Parameter SSIS:Name="Environment">
+    <SSIS:Properties>
+      <SSIS:Property SSIS:Name="ID">{TEST0001-0001-0001-0001-000000000001}</SSIS:Property>
+      <SSIS:Property SSIS:Name="DataType">String</SSIS:Property>
+      <SSIS:Property SSIS:Name="Description">Target environment</SSIS:Property>
+      <SSIS:Property SSIS:Name="DesignDefaultValue">DEV</SSIS:Property>
+      <SSIS:Property SSIS:Name="Required">True</SSIS:Property>
+      <SSIS:Property SSIS:Name="Sensitive">False</SSIS:Property>
+    </SSIS:Properties>
+  </SSIS:Parameter>
+  <SSIS:Parameter SSIS:Name="ServerName">
+    <SSIS:Properties>
+      <SSIS:Property SSIS:Name="ID">{TEST0001-0001-0001-0001-000000000002}</SSIS:Property>
+      <SSIS:Property SSIS:Name="DataType">String</SSIS:Property>
+      <SSIS:Property SSIS:Name="Description">SQL Server instance name</SSIS:Property>
+      <SSIS:Property SSIS:Name="DesignDefaultValue">localhost</SSIS:Property>
+      <SSIS:Property SSIS:Name="Required">True</SSIS:Property>
+      <SSIS:Property SSIS:Name="Sensitive">False</SSIS:Property>
+    </SSIS:Properties>
+  </SSIS:Parameter>
+  <SSIS:Parameter SSIS:Name="BatchSize">
+    <SSIS:Properties>
+      <SSIS:Property SSIS:Name="ID">{TEST0001-0001-0001-0001-000000000003}</SSIS:Property>
+      <SSIS:Property SSIS:Name="DataType">Int32</SSIS:Property>
+      <SSIS:Property SSIS:Name="Description">Rows per batch</SSIS:Property>
+      <SSIS:Property SSIS:Name="DesignDefaultValue">10000</SSIS:Property>
+      <SSIS:Property SSIS:Name="Required">False</SSIS:Property>
+      <SSIS:Property SSIS:Name="Sensitive">False</SSIS:Property>
+    </SSIS:Properties>
+  </SSIS:Parameter>
+</SSIS:Parameters>

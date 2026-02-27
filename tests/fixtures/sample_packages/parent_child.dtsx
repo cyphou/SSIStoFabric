@@ -1,0 +1,183 @@
+<?xml version="1.0"?>
+<!--
+  Parent-Child fixture: a master package that calls child packages
+  with parameter bindings, sequence containers with parallelism,
+  and PackageParameters in container format.
+-->
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:ObjectName="ParentChildPackage"
+  DTS:Description="Master package with child package orchestration and parameter passing"
+  DTS:CreationDate="2024-06-01T10:00:00"
+  DTS:CreatorName="TestUser"
+  DTS:FormatVersion="8"
+  DTS:DTSID="{PC000000-0001-0000-0000-000000000001}">
+
+  <!-- Connection Managers -->
+  <DTS:ConnectionManager
+    DTS:ObjectName="ControlDB"
+    DTS:DTSID="{PC000000-0001-0000-0000-000000000010}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=localhost;Initial Catalog=ETL_Control;Provider=SQLNCLI11.1;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <!-- Variables -->
+  <DTS:Variable DTS:ObjectName="BatchID" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="RunDate" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String">2024-01-01</DTS:VariableValue>
+  </DTS:Variable>
+
+  <!-- Parameters in container format (standard SSIS 2012+) -->
+  <DTS:PackageParameters>
+    <DTS:PackageParameter DTS:ObjectName="Environment" DTS:DataType="String">
+      <DTS:VariableValue DTS:DataType="String">DEV</DTS:VariableValue>
+    </DTS:PackageParameter>
+    <DTS:PackageParameter DTS:ObjectName="ServerName" DTS:DataType="String">
+      <DTS:VariableValue DTS:DataType="String">localhost</DTS:VariableValue>
+    </DTS:PackageParameter>
+    <DTS:PackageParameter DTS:ObjectName="BatchSize" DTS:DataType="Int32">
+      <DTS:VariableValue DTS:DataType="Int32">5000</DTS:VariableValue>
+    </DTS:PackageParameter>
+  </DTS:PackageParameters>
+
+  <!-- Control Flow -->
+  <DTS:Executables>
+
+    <!-- Step 1: Initialize -->
+    <DTS:Executable
+      DTS:ObjectName="Initialize Batch"
+      DTS:DTSID="{PC000000-0001-0000-0000-000000000100}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Create batch record">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{PC000000-0001-0000-0000-000000000010}"
+          SQLTask:SqlStatementSource="INSERT INTO BatchLog (StartTime) VALUES (GETDATE())" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 2: Parallel extraction (sequence container, no constraints = parallel) -->
+    <DTS:Executable
+      DTS:ObjectName="Parallel Extracts"
+      DTS:DTSID="{PC000000-0001-0000-0000-000000000200}"
+      DTS:CreationName="STOCK:SEQUENCE"
+      DTS:Description="Run extractions in parallel">
+      <DTS:Executables>
+
+        <DTS:Executable
+          DTS:ObjectName="Extract Customers"
+          DTS:DTSID="{PC000000-0001-0000-0000-000000000210}"
+          DTS:CreationName="Microsoft.ExecutePackageTask"
+          DTS:Description="Execute child_extract_customers.dtsx">
+          <DTS:ObjectData>
+            <DTS:ExecutePackageTask>
+              <DTS:PackageName>child_extract_customers.dtsx</DTS:PackageName>
+              <DTS:Connection>{PC000000-0001-0000-0000-000000000010}</DTS:Connection>
+              <DTS:ParameterAssignment>
+                <DTS:ParameterName>Environment</DTS:ParameterName>
+                <DTS:BindedVariableOrParameterName>$Package::Environment</DTS:BindedVariableOrParameterName>
+              </DTS:ParameterAssignment>
+              <DTS:ParameterAssignment>
+                <DTS:ParameterName>BatchID</DTS:ParameterName>
+                <DTS:BindedVariableOrParameterName>BatchID</DTS:BindedVariableOrParameterName>
+              </DTS:ParameterAssignment>
+            </DTS:ExecutePackageTask>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <DTS:Executable
+          DTS:ObjectName="Extract Orders"
+          DTS:DTSID="{PC000000-0001-0000-0000-000000000220}"
+          DTS:CreationName="Microsoft.ExecutePackageTask"
+          DTS:Description="Execute child_extract_orders.dtsx">
+          <DTS:ObjectData>
+            <DTS:ExecutePackageTask>
+              <DTS:PackageName>child_extract_orders.dtsx</DTS:PackageName>
+              <DTS:Connection>{PC000000-0001-0000-0000-000000000010}</DTS:Connection>
+              <DTS:ParameterAssignment>
+                <DTS:ParameterName>Environment</DTS:ParameterName>
+                <DTS:BindedVariableOrParameterName>$Package::Environment</DTS:BindedVariableOrParameterName>
+              </DTS:ParameterAssignment>
+            </DTS:ExecutePackageTask>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+      </DTS:Executables>
+      <!-- No precedence constraints = parallel execution -->
+    </DTS:Executable>
+
+    <!-- Step 3: Sequential dimension loads (sequence container with precedence constraints) -->
+    <DTS:Executable
+      DTS:ObjectName="Dimension Loads"
+      DTS:DTSID="{PC000000-0001-0000-0000-000000000300}"
+      DTS:CreationName="STOCK:SEQUENCE"
+      DTS:Description="Load dimensions in order">
+      <DTS:Executables>
+
+        <DTS:Executable
+          DTS:ObjectName="Load DimDate"
+          DTS:DTSID="{PC000000-0001-0000-0000-000000000310}"
+          DTS:CreationName="Microsoft.ExecutePackageTask"
+          DTS:Description="Execute load_dim_date.dtsx">
+          <DTS:ObjectData>
+            <DTS:ExecutePackageTask>
+              <DTS:PackageName>load_dim_date.dtsx</DTS:PackageName>
+              <DTS:Connection>{PC000000-0001-0000-0000-000000000010}</DTS:Connection>
+            </DTS:ExecutePackageTask>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <DTS:Executable
+          DTS:ObjectName="Load DimCustomer"
+          DTS:DTSID="{PC000000-0001-0000-0000-000000000320}"
+          DTS:CreationName="Microsoft.ExecutePackageTask"
+          DTS:Description="Execute load_dim_customer.dtsx">
+          <DTS:ObjectData>
+            <DTS:ExecutePackageTask>
+              <DTS:PackageName>load_dim_customer.dtsx</DTS:PackageName>
+              <DTS:Connection>{PC000000-0001-0000-0000-000000000010}</DTS:Connection>
+            </DTS:ExecutePackageTask>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+      </DTS:Executables>
+
+      <!-- Sequential: DimDate must complete before DimCustomer -->
+      <DTS:PrecedenceConstraints>
+        <DTS:PrecedenceConstraint
+          DTS:From="{PC000000-0001-0000-0000-000000000310}"
+          DTS:To="{PC000000-0001-0000-0000-000000000320}"
+          DTS:Value="0" />
+      </DTS:PrecedenceConstraints>
+    </DTS:Executable>
+
+    <!-- Step 4: Finalize -->
+    <DTS:Executable
+      DTS:ObjectName="Finalize Batch"
+      DTS:DTSID="{PC000000-0001-0000-0000-000000000400}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Update batch completion">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{PC000000-0001-0000-0000-000000000010}"
+          SQLTask:SqlStatementSource="UPDATE BatchLog SET EndTime = GETDATE() WHERE BatchID = ?" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+  </DTS:Executables>
+
+  <!-- Top-level precedence constraints -->
+  <DTS:PrecedenceConstraints>
+    <DTS:PrecedenceConstraint DTS:From="{PC000000-0001-0000-0000-000000000100}" DTS:To="{PC000000-0001-0000-0000-000000000200}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{PC000000-0001-0000-0000-000000000200}" DTS:To="{PC000000-0001-0000-0000-000000000300}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{PC000000-0001-0000-0000-000000000300}" DTS:To="{PC000000-0001-0000-0000-000000000400}" DTS:Value="0" />
+  </DTS:PrecedenceConstraints>
+
+</DTS:Executable>

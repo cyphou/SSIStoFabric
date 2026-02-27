@@ -1,0 +1,52 @@
+# =============================================================================
+# SSIS to Fabric Migration - Default Configuration
+# =============================================================================
+# Copy this file and adjust values for your environment.
+
+project_name: ssis-to-fabric-migration
+strategy: hybrid            # Options: data_factory, spark, hybrid
+dataflow_type: notebook     # Options: notebook (default), dataflow_gen2
+output_dir: output
+log_level: INFO
+
+source:
+  # Option A: Connect to SSISDB catalog
+  catalog_server: ""
+  catalog_database: SSISDB
+  catalog_user: ""
+  catalog_password: ""
+  # Option B: Point to local .dtsx files
+  packages_path: ""
+
+fabric:
+  workspace_id: ""
+  workspace_name: ""
+  capacity_id: ""
+
+azure:
+  tenant_id: ""
+  client_id: ""
+  client_secret: ""
+  subscription_id: ""
+  resource_group: ""
+
+data_factory:
+  factory_name: ""
+  linked_service_name: ""
+
+regression:
+  source_db_connection: ""
+  target_db_connection: ""
+  baseline_dir: tests/regression/baselines
+  tolerance_row_count: 0.0
+  tolerance_numeric: 0.0001
+  sample_size: 10000
+
+# Map SSIS connection manager names to Fabric connection IDs.
+# When a mapping exists the generated pipeline uses the Fabric id directly
+# instead of a TODO placeholder.
+# Example:
+#   connection_mappings:
+#     OLEDB_Source: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+#     ADO_Warehouse: "11111111-2222-3333-4444-555555555555"
+connection_mappings: {}

@@ -1,0 +1,168 @@
+# =============================================================================
+# Azure DevOps Pipeline - SSIS to Fabric Migration CI/CD
+# =============================================================================
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - src/**
+      - tests/**
+      - pyproject.toml
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  pythonVersion: '3.11'
+
+stages:
+
+  # ===========================
+  # Stage 1: Build & Test
+  # ===========================
+  - stage: Build
+    displayName: 'Build & Test'
+    jobs:
+      - job: Test
+        displayName: 'Run Tests'
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+            displayName: 'Use Python $(pythonVersion)'
+
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -e ".[dev]"
+            displayName: 'Install dependencies'
+
+          - script: |
+              ruff check src/ tests/
+            displayName: 'Lint with ruff'
+
+          - script: |
+              ruff format --check src/ tests/
+            displayName: 'Check formatting'
+
+          - script: |
+              mypy src/ssis_to_fabric/ --ignore-missing-imports
+            displayName: 'Type check with mypy'
+
+          - script: |
+              pytest tests/unit/ -v --tb=short \
+                --junitxml=test-results/unit-results.xml \
+                --cov=ssis_to_fabric \
+                --cov-report=xml:test-results/coverage.xml \
+                --cov-report=html:test-results/htmlcov
+            displayName: 'Run unit tests'
+
+          - script: |
+              pytest tests/regression/ -v --tb=short \
+                --junitxml=test-results/regression-results.xml \
+                -m regression
+            displayName: 'Run non-regression tests'
+
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: 'test-results/*.xml'
+              mergeTestResults: true
+            condition: always()
+            displayName: 'Publish test results'
+
+          - task: PublishCodeCoverageResults@1
+            inputs:
+              codeCoverageTool: 'Cobertura'
+              summaryFileLocation: 'test-results/coverage.xml'
+              reportDirectory: 'test-results/htmlcov'
+            condition: always()
+            displayName: 'Publish code coverage'
+
+  # ===========================
+  # Stage 2: Migration Dry Run
+  # ===========================
+  - stage: DryRun
+    displayName: 'Migration Dry Run'
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: DryRun
+        displayName: 'Generate Migration Artifacts'
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+
+          - script: |
+              pip install -e .
+            displayName: 'Install package'
+
+          - script: |
+              ssis2fabric analyze tests/fixtures/sample_packages/
+            displayName: 'Analyze sample packages'
+
+          - script: |
+              ssis2fabric plan tests/fixtures/sample_packages/ \
+                --strategy hybrid \
+                --output output/dry-run
+            displayName: 'Generate migration plan'
+
+          - script: |
+              ssis2fabric migrate tests/fixtures/sample_packages/ \
+                --strategy hybrid \
+                --output output/dry-run
+            displayName: 'Execute dry-run migration'
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: 'output/dry-run'
+              artifact: 'migration-artifacts'
+            displayName: 'Publish migration artifacts'
+
+  # ===========================
+  # Stage 3: Deploy to Fabric
+  # ===========================
+  - stage: Deploy
+    displayName: 'Deploy to Fabric'
+    dependsOn: DryRun
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployToFabric
+        displayName: 'Deploy to Fabric Workspace'
+        environment: 'production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: UsePythonVersion@0
+                  inputs:
+                    versionSpec: '$(pythonVersion)'
+
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    buildType: 'current'
+                    artifactName: 'migration-artifacts'
+                    targetPath: '$(Pipeline.Workspace)/artifacts'
+                  displayName: 'Download migration artifacts'
+
+                - script: |
+                    pip install -e .
+                  displayName: 'Install package'
+
+                - script: |
+                    ssis2fabric deploy $(Pipeline.Workspace)/artifacts \
+                      --workspace-id $(FABRIC_WORKSPACE_ID)
+                  displayName: 'Deploy to Fabric via REST API'
+                  env:
+                    AZURE_TENANT_ID: $(AZURE_TENANT_ID)
+                    AZURE_CLIENT_ID: $(AZURE_CLIENT_ID)
+                    AZURE_CLIENT_SECRET: $(AZURE_CLIENT_SECRET)

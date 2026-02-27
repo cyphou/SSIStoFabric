@@ -1,0 +1,240 @@
+<?xml version="1.0"?>
+<!--
+  Example 06 - Multi-Destination Fan-Out
+  ========================================
+  Single source data routed to multiple destinations using Multicast:
+    - Operational database (full data)
+    - Archive flat file (full data)
+    - Reporting table (aggregated via Aggregate)
+    - Audit table (row counts)
+
+  Migration Target: Hybrid (Multicast → Spark, simple destinations → DF)
+  Complexity: MEDIUM
+-->
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:ObjectName="MultiDestinationPackage"
+  DTS:Description="Fan-out order data to multiple destinations using Multicast"
+  DTS:CreationDate="2024-06-12T14:00:00"
+  DTS:CreatorName="DataEngineer"
+  DTS:FormatVersion="8"
+  DTS:DTSID="{06000000-0001-0000-0000-000000000001}">
+
+  <!-- Connection Managers -->
+  <DTS:ConnectionManager
+    DTS:ObjectName="SourceDB"
+    DTS:DTSID="{06000000-0001-0000-0000-000000000010}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=prod-server;Initial Catalog=OrdersDB;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="OperationalDB"
+    DTS:DTSID="{06000000-0001-0000-0000-000000000011}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=ops-server;Initial Catalog=OperationalDB;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="ReportingDB"
+    DTS:DTSID="{06000000-0001-0000-0000-000000000012}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=rpt-server;Initial Catalog=ReportingDB;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="ArchiveFile"
+    DTS:DTSID="{06000000-0001-0000-0000-000000000013}"
+    DTS:CreationName="FLATFILE">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="\\archive-share\orders\daily_orders.csv" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <!-- Control Flow -->
+  <DTS:Executables>
+
+    <!-- Step 1: Pre-load cleanup -->
+    <DTS:Executable
+      DTS:ObjectName="Pre-Load Cleanup"
+      DTS:DTSID="{06000000-0001-0000-0000-000000000100}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Truncate daily staging tables">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{06000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="TRUNCATE TABLE dbo.Daily_Orders; TRUNCATE TABLE dbo.Daily_Order_Summary;" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 2: Data Flow with Multicast -->
+    <DTS:Executable
+      DTS:ObjectName="Fan-Out Order Data"
+      DTS:DTSID="{06000000-0001-0000-0000-000000000101}"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:Description="Read orders and distribute to multiple destinations">
+      <DTS:ObjectData>
+        <pipeline version="1">
+          <components>
+            <!-- Source -->
+            <component name="Daily Orders Source" componentClassID="Microsoft.OLEDBSource">
+              <properties>
+                <property name="SqlCommand">SELECT OrderID, CustomerID, ProductID, Quantity, UnitPrice, OrderDate, Region, SalesRepID FROM dbo.Orders WHERE OrderDate = CAST(GETDATE() AS DATE)</property>
+              </properties>
+              <outputs>
+                <output name="OLE DB Source Output">
+                  <outputColumns>
+                    <outputColumn name="OrderID" dataType="i4" />
+                    <outputColumn name="CustomerID" dataType="i4" />
+                    <outputColumn name="ProductID" dataType="i4" />
+                    <outputColumn name="Quantity" dataType="i2" />
+                    <outputColumn name="UnitPrice" dataType="numeric" precision="18" scale="2" />
+                    <outputColumn name="OrderDate" dataType="dbTimeStamp" />
+                    <outputColumn name="Region" dataType="str" length="50" />
+                    <outputColumn name="SalesRepID" dataType="i4" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <!-- Derived Column: add computed fields -->
+            <component name="Add Computed Fields" componentClassID="Microsoft.DerivedColumn">
+              <outputs>
+                <output name="Derived Column Output">
+                  <outputColumns>
+                    <outputColumn name="LineTotal" dataType="numeric" precision="18" scale="2" />
+                    <outputColumn name="LoadTimestamp" dataType="dbTimeStamp" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <!-- Multicast: send to all destinations -->
+            <component name="Distribute to Targets" componentClassID="Microsoft.Multicast">
+            </component>
+
+            <!-- Dest 1: Operational DB (full detail) -->
+            <component name="Operational DB Dest" componentClassID="Microsoft.OLEDBDestination">
+              <properties>
+                <property name="OpenRowset">dbo.Daily_Orders</property>
+              </properties>
+              <inputs>
+                <input name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn name="OrderID" />
+                    <inputColumn name="CustomerID" />
+                    <inputColumn name="ProductID" />
+                    <inputColumn name="Quantity" />
+                    <inputColumn name="UnitPrice" />
+                    <inputColumn name="LineTotal" />
+                    <inputColumn name="OrderDate" />
+                    <inputColumn name="Region" />
+                    <inputColumn name="LoadTimestamp" />
+                  </inputColumns>
+                </input>
+              </inputs>
+            </component>
+
+            <!-- Dest 2: Archive file -->
+            <component name="Archive CSV Dest" componentClassID="Microsoft.FlatFileDestination">
+              <properties>
+                <property name="ConnectionManagerID">{06000000-0001-0000-0000-000000000013}</property>
+              </properties>
+            </component>
+
+            <!-- Branch: Aggregate for reporting -->
+            <component name="Aggregate by Region" componentClassID="Microsoft.Aggregate">
+            </component>
+
+            <!-- Dest 3: Reporting summary -->
+            <component name="Reporting Summary Dest" componentClassID="Microsoft.OLEDBDestination">
+              <properties>
+                <property name="OpenRowset">dbo.Daily_Order_Summary</property>
+              </properties>
+              <inputs>
+                <input name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn name="Region" />
+                    <inputColumn name="TotalOrders" />
+                    <inputColumn name="TotalRevenue" />
+                  </inputColumns>
+                </input>
+              </inputs>
+            </component>
+
+            <!-- Row Count -->
+            <component name="Count Total Rows" componentClassID="Microsoft.RowCount">
+            </component>
+          </components>
+
+          <paths>
+            <path startId="Daily Orders Source.Outputs[OLE DB Source Output]"
+                  endId="Add Computed Fields.Inputs[Derived Column Default Input]" />
+            <path startId="Add Computed Fields.Outputs[Derived Column Output]"
+                  endId="Distribute to Targets.Inputs[Multicast Input 1]" />
+            <path startId="Distribute to Targets.Outputs[Multicast Output 1]"
+                  endId="Operational DB Dest.Inputs[OLE DB Destination Input]" />
+            <path startId="Distribute to Targets.Outputs[Multicast Output 2]"
+                  endId="Archive CSV Dest.Inputs[Flat File Destination Input]" />
+            <path startId="Distribute to Targets.Outputs[Multicast Output 3]"
+                  endId="Aggregate by Region.Inputs[Aggregate Default Input]" />
+            <path startId="Distribute to Targets.Outputs[Multicast Output 4]"
+                  endId="Count Total Rows.Inputs[Row Count Input]" />
+            <path startId="Aggregate by Region.Outputs[Aggregate Output 1]"
+                  endId="Reporting Summary Dest.Inputs[OLE DB Destination Input]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 3: Send daily report email -->
+    <DTS:Executable
+      DTS:ObjectName="Send Summary Email"
+      DTS:DTSID="{06000000-0001-0000-0000-000000000102}"
+      DTS:CreationName="Microsoft.SendMailTask"
+      DTS:Description="Email daily order summary to stakeholders">
+    </DTS:Executable>
+
+    <!-- Step 4: Audit log -->
+    <DTS:Executable
+      DTS:ObjectName="Log Completion"
+      DTS:DTSID="{06000000-0001-0000-0000-000000000103}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Record successful load">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{06000000-0001-0000-0000-000000000011}"
+          SQLTask:SqlStatementSource="INSERT INTO dbo.ETL_Log (PackageName, Status, RowCount, CompletedAt) VALUES ('MultiDestination', 'Success', ?, GETDATE())" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+  </DTS:Executables>
+
+  <!-- Precedence Constraints -->
+  <DTS:PrecedenceConstraints>
+    <DTS:PrecedenceConstraint
+      DTS:From="{06000000-0001-0000-0000-000000000100}"
+      DTS:To="{06000000-0001-0000-0000-000000000101}"
+      DTS:Value="0" />
+    <DTS:PrecedenceConstraint
+      DTS:From="{06000000-0001-0000-0000-000000000101}"
+      DTS:To="{06000000-0001-0000-0000-000000000102}"
+      DTS:Value="0" />
+    <DTS:PrecedenceConstraint
+      DTS:From="{06000000-0001-0000-0000-000000000102}"
+      DTS:To="{06000000-0001-0000-0000-000000000103}"
+      DTS:Value="0" />
+  </DTS:PrecedenceConstraints>
+
+</DTS:Executable>

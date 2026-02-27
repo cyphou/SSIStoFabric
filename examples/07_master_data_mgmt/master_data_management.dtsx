@@ -1,0 +1,387 @@
+<?xml version="1.0"?>
+<!--
+  Example 07 - Master Data Management
+  =====================================
+  Complex MDM scenario with:
+    - Multiple source systems (CRM + ERP) with merge join
+    - Fuzzy matching via Script Component
+    - Survivorship rules with conditional splits
+    - Data quality scoring
+    - Golden record creation
+
+  Migration Target: Spark (due to merge join + script component)
+  Complexity: HIGH
+-->
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:ObjectName="MasterDataManagement"
+  DTS:Description="Merge customer records from CRM and ERP to create golden master records"
+  DTS:CreationDate="2024-07-01T10:00:00"
+  DTS:CreatorName="MDMArchitect"
+  DTS:FormatVersion="8"
+  DTS:DTSID="{07000000-0001-0000-0000-000000000001}">
+
+  <!-- Connection Managers -->
+  <DTS:ConnectionManager
+    DTS:ObjectName="CRM_System"
+    DTS:DTSID="{07000000-0001-0000-0000-000000000010}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=crm-server;Initial Catalog=CRM;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="ERP_System"
+    DTS:DTSID="{07000000-0001-0000-0000-000000000011}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=erp-server;Initial Catalog=ERP;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="MDM_Hub"
+    DTS:DTSID="{07000000-0001-0000-0000-000000000012}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=mdm-server;Initial Catalog=MasterData;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="DuplicatesReport"
+    DTS:DTSID="{07000000-0001-0000-0000-000000000013}"
+    DTS:CreationName="FLATFILE">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="C:\MDM\Reports\potential_duplicates.csv" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <!-- Variables -->
+  <DTS:Variable DTS:ObjectName="MatchThreshold" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Double">0.85</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="CRMCount" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="ERPCount" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="MergedCount" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <!-- Parameters -->
+  <DTS:PackageParameter DTS:ObjectName="RunMode" DTS:DataType="String">
+    <DTS:Property DTS:Name="ParameterValue">Full</DTS:Property>
+  </DTS:PackageParameter>
+
+  <!-- Control Flow -->
+  <DTS:Executables>
+
+    <!-- Step 1: Initialize MDM cycle -->
+    <DTS:Executable
+      DTS:ObjectName="Initialize MDM Cycle"
+      DTS:DTSID="{07000000-0001-0000-0000-000000000100}"
+      DTS:CreationName="STOCK:SEQUENCE"
+      DTS:Description="Prepare staging and audit tables">
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:ObjectName="Truncate MDM Staging"
+          DTS:DTSID="{07000000-0001-0000-0000-000000000110}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{07000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="TRUNCATE TABLE stg.CRM_Customers; TRUNCATE TABLE stg.ERP_Customers; TRUNCATE TABLE stg.MatchResults;" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+        <DTS:Executable
+          DTS:ObjectName="Start MDM Audit"
+          DTS:DTSID="{07000000-0001-0000-0000-000000000111}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{07000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="INSERT INTO audit.MDMCycle (CycleStart, Status) VALUES (GETDATE(), 'Running'); SELECT SCOPE_IDENTITY() AS CycleID;" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:Executable>
+
+    <!-- Step 2: Data Flow - Extract and Merge Sources -->
+    <DTS:Executable
+      DTS:ObjectName="Merge Source Systems"
+      DTS:DTSID="{07000000-0001-0000-0000-000000000101}"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:Description="Extract CRM and ERP customers, standardize, and merge for matching">
+      <DTS:ObjectData>
+        <pipeline version="1">
+          <components>
+            <!-- Source 1: CRM Customers (sorted by LastName) -->
+            <component name="CRM Customer Extract" componentClassID="Microsoft.OLEDBSource">
+              <properties>
+                <property name="SqlCommand">SELECT CustomerID AS CRM_ID, FirstName, LastName, Email, Phone, Address1, City, State, ZipCode, Country, CreatedDate, ModifiedDate FROM dbo.Contact WHERE IsActive = 1 ORDER BY LastName, FirstName</property>
+              </properties>
+              <outputs>
+                <output name="OLE DB Source Output">
+                  <outputColumns>
+                    <outputColumn name="CRM_ID" dataType="i4" />
+                    <outputColumn name="FirstName" dataType="str" length="50" />
+                    <outputColumn name="LastName" dataType="str" length="50" />
+                    <outputColumn name="Email" dataType="str" length="100" />
+                    <outputColumn name="Phone" dataType="str" length="20" />
+                    <outputColumn name="Address1" dataType="str" length="200" />
+                    <outputColumn name="City" dataType="str" length="100" />
+                    <outputColumn name="State" dataType="str" length="50" />
+                    <outputColumn name="ZipCode" dataType="str" length="10" />
+                    <outputColumn name="Country" dataType="str" length="50" />
+                    <outputColumn name="CreatedDate" dataType="dbTimeStamp" />
+                    <outputColumn name="ModifiedDate" dataType="dbTimeStamp" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <!-- Sort CRM data -->
+            <component name="Sort CRM" componentClassID="Microsoft.Sort">
+            </component>
+
+            <!-- Source 2: ERP Customers (sorted by CustomerName) -->
+            <component name="ERP Customer Extract" componentClassID="Microsoft.OLEDBSource">
+              <properties>
+                <property name="SqlCommand">SELECT AccountID AS ERP_ID, CustomerName, ContactEmail, ContactPhone, BillingAddress, BillingCity, BillingState, BillingZip, BillingCountry, AccountType, CreditLimit FROM dbo.Account WHERE AccountStatus = 'Active' ORDER BY CustomerName</property>
+              </properties>
+              <outputs>
+                <output name="OLE DB Source Output">
+                  <outputColumns>
+                    <outputColumn name="ERP_ID" dataType="i4" />
+                    <outputColumn name="CustomerName" dataType="str" length="100" />
+                    <outputColumn name="ContactEmail" dataType="str" length="100" />
+                    <outputColumn name="ContactPhone" dataType="str" length="20" />
+                    <outputColumn name="BillingAddress" dataType="str" length="200" />
+                    <outputColumn name="BillingCity" dataType="str" length="100" />
+                    <outputColumn name="BillingState" dataType="str" length="50" />
+                    <outputColumn name="BillingZip" dataType="str" length="10" />
+                    <outputColumn name="BillingCountry" dataType="str" length="50" />
+                    <outputColumn name="AccountType" dataType="str" length="20" />
+                    <outputColumn name="CreditLimit" dataType="numeric" precision="18" scale="2" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <!-- Sort ERP data -->
+            <component name="Sort ERP" componentClassID="Microsoft.Sort">
+            </component>
+
+            <!-- Merge Join: match on email -->
+            <component name="Merge CRM and ERP" componentClassID="Microsoft.MergeJoin">
+              <properties>
+                <property name="JoinType">FullOuter</property>
+              </properties>
+            </component>
+
+            <!-- Script: fuzzy matching + data quality scoring -->
+            <component name="Fuzzy Match and Score" componentClassID="Microsoft.ScriptComponent">
+              <properties>
+                <property name="ScriptLanguage">CSharp</property>
+              </properties>
+            </component>
+
+            <!-- Conditional Split: route by match quality -->
+            <component name="Route by Match Quality" componentClassID="Microsoft.ConditionalSplit">
+            </component>
+
+            <!-- Dest: Matched records → Golden record staging -->
+            <component name="Golden Records" componentClassID="Microsoft.OLEDBDestination">
+              <properties>
+                <property name="OpenRowset">stg.MatchResults</property>
+              </properties>
+              <inputs>
+                <input name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn name="CRM_ID" />
+                    <inputColumn name="ERP_ID" />
+                    <inputColumn name="MasterName" />
+                    <inputColumn name="MasterEmail" />
+                    <inputColumn name="MatchScore" />
+                    <inputColumn name="MatchType" />
+                  </inputColumns>
+                </input>
+              </inputs>
+            </component>
+
+            <!-- Dest: Potential duplicates → file for manual review -->
+            <component name="Potential Duplicates File" componentClassID="Microsoft.FlatFileDestination">
+              <properties>
+                <property name="ConnectionManagerID">{07000000-0001-0000-0000-000000000013}</property>
+              </properties>
+            </component>
+          </components>
+
+          <paths>
+            <path startId="CRM Customer Extract.Outputs[OLE DB Source Output]"
+                  endId="Sort CRM.Inputs[Sort Input]" />
+            <path startId="ERP Customer Extract.Outputs[OLE DB Source Output]"
+                  endId="Sort ERP.Inputs[Sort Input]" />
+            <path startId="Sort CRM.Outputs[Sort Output]"
+                  endId="Merge CRM and ERP.Inputs[Merge Join Left Input]" />
+            <path startId="Sort ERP.Outputs[Sort Output]"
+                  endId="Merge CRM and ERP.Inputs[Merge Join Right Input]" />
+            <path startId="Merge CRM and ERP.Outputs[Merge Join Output]"
+                  endId="Fuzzy Match and Score.Inputs[Script Component Input]" />
+            <path startId="Fuzzy Match and Score.Outputs[Script Component Output]"
+                  endId="Route by Match Quality.Inputs[Conditional Split Default Input]" />
+            <path startId="Route by Match Quality.Outputs[High Confidence Match]"
+                  endId="Golden Records.Inputs[OLE DB Destination Input]" />
+            <path startId="Route by Match Quality.Outputs[Low Confidence / Review]"
+                  endId="Potential Duplicates File.Inputs[Flat File Destination Input]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 3: Apply survivorship rules -->
+    <DTS:Executable
+      DTS:ObjectName="Apply Survivorship Rules"
+      DTS:DTSID="{07000000-0001-0000-0000-000000000102}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Execute stored procedure to create golden records from match results">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{07000000-0001-0000-0000-000000000012}"
+          SQLTask:SqlStatementSource="EXEC mdm.sp_ApplySurvivorshipRules @CycleID = ?, @Threshold = 0.85" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 4: Data Flow - Write back cross-references -->
+    <DTS:Executable
+      DTS:ObjectName="Update Cross References"
+      DTS:DTSID="{07000000-0001-0000-0000-000000000103}"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:Description="Update cross-reference table linking CRM and ERP IDs to master ID">
+      <DTS:ObjectData>
+        <pipeline version="1">
+          <components>
+            <component name="XRef Source" componentClassID="Microsoft.OLEDBSource">
+              <properties>
+                <property name="SqlCommand">SELECT MasterID, CRM_ID, ERP_ID, MatchScore, MatchType FROM mdm.GoldenRecord WHERE CycleID = ?</property>
+              </properties>
+              <outputs>
+                <output name="OLE DB Source Output">
+                  <outputColumns>
+                    <outputColumn name="MasterID" dataType="i4" />
+                    <outputColumn name="CRM_ID" dataType="i4" />
+                    <outputColumn name="ERP_ID" dataType="i4" />
+                    <outputColumn name="MatchScore" dataType="numeric" precision="5" scale="2" />
+                    <outputColumn name="MatchType" dataType="str" length="20" />
+                  </outputColumns>
+                </output>
+              </outputs>
+            </component>
+
+            <component name="XRef Destination" componentClassID="Microsoft.OLEDBDestination">
+              <properties>
+                <property name="OpenRowset">mdm.CrossReference</property>
+              </properties>
+              <inputs>
+                <input name="OLE DB Destination Input">
+                  <inputColumns>
+                    <inputColumn name="MasterID" />
+                    <inputColumn name="CRM_ID" />
+                    <inputColumn name="ERP_ID" />
+                    <inputColumn name="MatchScore" />
+                    <inputColumn name="MatchType" />
+                  </inputColumns>
+                </input>
+              </inputs>
+            </component>
+          </components>
+
+          <paths>
+            <path startId="XRef Source.Outputs[OLE DB Source Output]"
+                  endId="XRef Destination.Inputs[OLE DB Destination Input]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 5: Publish golden records -->
+    <DTS:Executable
+      DTS:ObjectName="Publish to Downstream"
+      DTS:DTSID="{07000000-0001-0000-0000-000000000104}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Push golden records to downstream consumers">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{07000000-0001-0000-0000-000000000012}"
+          SQLTask:SqlStatementSource="EXEC mdm.sp_PublishGoldenRecords @CycleID = ?" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+    <!-- Step 6: Send notification -->
+    <DTS:Executable
+      DTS:ObjectName="Send MDM Report"
+      DTS:DTSID="{07000000-0001-0000-0000-000000000105}"
+      DTS:CreationName="Microsoft.ScriptTask"
+      DTS:Description="Generate and email MDM cycle summary report">
+    </DTS:Executable>
+
+    <!-- Step 7: Complete audit -->
+    <DTS:Executable
+      DTS:ObjectName="Complete MDM Audit"
+      DTS:DTSID="{07000000-0001-0000-0000-000000000106}"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Finalize audit record">
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+          SQLTask:Connection="{07000000-0001-0000-0000-000000000012}"
+          SQLTask:SqlStatementSource="UPDATE audit.MDMCycle SET CycleEnd = GETDATE(), Status = 'Success', RecordsProcessed = ?, DuplicatesFound = ? WHERE CycleID = ?" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+
+  </DTS:Executables>
+
+  <!-- Precedence Constraints -->
+  <DTS:PrecedenceConstraints>
+    <DTS:PrecedenceConstraint DTS:From="{07000000-0001-0000-0000-000000000100}" DTS:To="{07000000-0001-0000-0000-000000000101}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{07000000-0001-0000-0000-000000000101}" DTS:To="{07000000-0001-0000-0000-000000000102}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{07000000-0001-0000-0000-000000000102}" DTS:To="{07000000-0001-0000-0000-000000000103}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{07000000-0001-0000-0000-000000000103}" DTS:To="{07000000-0001-0000-0000-000000000104}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{07000000-0001-0000-0000-000000000104}" DTS:To="{07000000-0001-0000-0000-000000000105}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{07000000-0001-0000-0000-000000000105}" DTS:To="{07000000-0001-0000-0000-000000000106}" DTS:Value="0" />
+  </DTS:PrecedenceConstraints>
+
+  <!-- Event Handlers -->
+  <DTS:EventHandlers>
+    <DTS:EventHandler DTS:EventName="OnError">
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:ObjectName="Log MDM Error"
+          DTS:DTSID="{07000000-0001-0000-0000-000000000200}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{07000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="UPDATE audit.MDMCycle SET CycleEnd = GETDATE(), Status = 'Failed', ErrorMessage = ? WHERE CycleID = ?" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:EventHandler>
+  </DTS:EventHandlers>
+
+</DTS:Executable>

@@ -1,0 +1,658 @@
+<?xml version="1.0"?>
+<!--
+  Example 10 - Enterprise ETL with Full Error Handling
+  =====================================================
+  Maximum complexity enterprise package showcasing:
+    - Nested Sequence Containers (Init → Stage → Transform → Load → Finalize)
+    - Data flow with Pivot and Unpivot transforms
+    - Script Component for custom row-level processing
+    - Expression-based precedence constraints
+    - Execute Process task (call external executable)
+    - Multiple event handlers (OnError, OnWarning, OnPreExecute, OnPostExecute)
+    - For Loop with dynamic SQL
+    - File System task for archive management
+
+  Migration Target: Hybrid + Manual review (Script, Execute Process, File System)
+  Complexity: MANUAL (some components cannot be auto-migrated)
+-->
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:ObjectName="EnterpriseETL"
+  DTS:Description="Enterprise-grade ETL with comprehensive error handling, file management, and multi-stage processing"
+  DTS:CreationDate="2024-09-01T05:00:00"
+  DTS:CreatorName="SeniorArchitect"
+  DTS:FormatVersion="8"
+  DTS:DTSID="{10000000-0001-0000-0000-000000000001}">
+
+  <!-- Connection Managers -->
+  <DTS:ConnectionManager
+    DTS:ObjectName="ERP_Oracle"
+    DTS:DTSID="{10000000-0001-0000-0000-000000000010}"
+    DTS:CreationName="ODBC">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="DSN=ORACLE_ERP;UID=etl_svc;PWD=********;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="CRM_ADO"
+    DTS:DTSID="{10000000-0001-0000-0000-000000000011}"
+    DTS:CreationName="ADO.NET">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=crm-db;Initial Catalog=CRM;User=crm_etl;Password=********;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="DW_SQL"
+    DTS:DTSID="{10000000-0001-0000-0000-000000000012}"
+    DTS:CreationName="OLEDB">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Data Source=dw-cluster;Initial Catalog=EnterpriseDW;Provider=SQLNCLI11.1;Integrated Security=SSPI;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="Excel_Exchange_Rates"
+    DTS:DTSID="{10000000-0001-0000-0000-000000000013}"
+    DTS:CreationName="EXCEL">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="Provider=Microsoft.ACE.OLEDB.12.0;Data Source=\\finance-share\rates\daily_rates.xlsx;Extended Properties='Excel 12.0 XML;HDR=YES';" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="FTP_Partner"
+    DTS:DTSID="{10000000-0001-0000-0000-000000000014}"
+    DTS:CreationName="FTP">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="FTPServer=ftp.partner.com;Port=21;UserName=etl_upload;Password=********;" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <DTS:ConnectionManager
+    DTS:ObjectName="ErrorLog_File"
+    DTS:DTSID="{10000000-0001-0000-0000-000000000015}"
+    DTS:CreationName="FLATFILE">
+    <DTS:ObjectData>
+      <DTS:ConnectionManager
+        ConnectionString="C:\ETL\Logs\enterprise_etl_errors.csv" />
+    </DTS:ObjectData>
+  </DTS:ConnectionManager>
+
+  <!-- Variables -->
+  <DTS:Variable DTS:ObjectName="BatchID" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="RetryCount" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="MaxRetries" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">3</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="CurrentMonth" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">1</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="ArchivePath" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="String">\\archive-server\ETL\</DTS:VariableValue>
+  </DTS:Variable>
+
+  <DTS:Variable DTS:ObjectName="ErrorCount" DTS:Namespace="User">
+    <DTS:VariableValue DTS:DataType="Int32">0</DTS:VariableValue>
+  </DTS:Variable>
+
+  <!-- Parameters -->
+  <DTS:PackageParameter DTS:ObjectName="Environment" DTS:DataType="String">
+    <DTS:Property DTS:Name="ParameterValue">Production</DTS:Property>
+  </DTS:PackageParameter>
+
+  <DTS:PackageParameter DTS:ObjectName="NotificationEmail" DTS:DataType="String">
+    <DTS:Property DTS:Name="ParameterValue">dw-team@corp.com</DTS:Property>
+  </DTS:PackageParameter>
+
+  <!-- =================================================================== -->
+  <!-- Control Flow -->
+  <!-- =================================================================== -->
+  <DTS:Executables>
+
+    <!-- =========================================== -->
+    <!-- STAGE 1: Initialization -->
+    <!-- =========================================== -->
+    <DTS:Executable
+      DTS:ObjectName="Stage 1 - Initialize"
+      DTS:DTSID="{10000000-0001-0000-0000-000000000100}"
+      DTS:CreationName="STOCK:SEQUENCE"
+      DTS:Description="Initialize batch, validate connections, prepare staging">
+
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:ObjectName="Create ETL Batch"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000110}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask"
+          DTS:Description="Create new ETL batch record">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{10000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="EXEC etl.sp_CreateBatch @PackageName = 'EnterpriseETL', @Env = ?; SELECT SCOPE_IDENTITY() AS BatchID;" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <DTS:Executable
+          DTS:ObjectName="Truncate All Staging"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000111}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask"
+          DTS:Description="Clear all staging tables">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{10000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="EXEC etl.sp_TruncateAllStaging" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- Validate external resources -->
+        <DTS:Executable
+          DTS:ObjectName="Validate External Resources"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000112}"
+          DTS:CreationName="Microsoft.ScriptTask"
+          DTS:Description="Verify connectivity to Oracle, SAP, FTP, and file paths before proceeding">
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:Executable>
+
+    <!-- =========================================== -->
+    <!-- STAGE 2: Extract and Stage -->
+    <!-- =========================================== -->
+    <DTS:Executable
+      DTS:ObjectName="Stage 2 - Extract"
+      DTS:DTSID="{10000000-0001-0000-0000-000000000200}"
+      DTS:CreationName="STOCK:SEQUENCE"
+      DTS:Description="Extract data from all source systems into staging">
+
+      <DTS:Executables>
+        <!-- Data Flow: ERP Financial Transactions -->
+        <DTS:Executable
+          DTS:ObjectName="Extract Financial Trans"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000210}"
+          DTS:CreationName="Microsoft.Pipeline"
+          DTS:Description="Extract GL transactions from Oracle ERP">
+          <DTS:ObjectData>
+            <pipeline version="1">
+              <components>
+                <component name="GL Transactions Source" componentClassID="Microsoft.OLEDBSource">
+                  <properties>
+                    <property name="SqlCommand">SELECT TXN_ID, ACCOUNT_CODE, COST_CENTER, AMOUNT, CURRENCY, TXN_DATE, PERIOD, FISCAL_YEAR, DESCRIPTION, CREATED_BY, CREATED_DATE FROM GL.JOURNAL_ENTRIES WHERE PERIOD = ? AND FISCAL_YEAR = ?</property>
+                  </properties>
+                  <outputs>
+                    <output name="OLE DB Source Output">
+                      <outputColumns>
+                        <outputColumn name="TXN_ID" dataType="i8" />
+                        <outputColumn name="ACCOUNT_CODE" dataType="str" length="20" />
+                        <outputColumn name="COST_CENTER" dataType="str" length="10" />
+                        <outputColumn name="AMOUNT" dataType="numeric" precision="18" scale="2" />
+                        <outputColumn name="CURRENCY" dataType="str" length="3" />
+                        <outputColumn name="TXN_DATE" dataType="dbTimeStamp" />
+                        <outputColumn name="PERIOD" dataType="i4" />
+                        <outputColumn name="FISCAL_YEAR" dataType="i4" />
+                        <outputColumn name="DESCRIPTION" dataType="str" length="500" />
+                        <outputColumn name="CREATED_BY" dataType="str" length="50" />
+                        <outputColumn name="CREATED_DATE" dataType="dbTimeStamp" />
+                      </outputColumns>
+                    </output>
+                  </outputs>
+                </component>
+
+                <!-- Script: custom currency conversion logic -->
+                <component name="Currency Conversion Script" componentClassID="Microsoft.ScriptComponent">
+                  <properties>
+                    <property name="ScriptLanguage">CSharp</property>
+                  </properties>
+                </component>
+
+                <component name="GL Staging Dest" componentClassID="Microsoft.OLEDBDestination">
+                  <properties>
+                    <property name="OpenRowset">stg.GL_Transactions</property>
+                  </properties>
+                  <inputs>
+                    <input name="OLE DB Destination Input">
+                      <inputColumns>
+                        <inputColumn name="TXN_ID" />
+                        <inputColumn name="ACCOUNT_CODE" />
+                        <inputColumn name="COST_CENTER" />
+                        <inputColumn name="AMOUNT" />
+                        <inputColumn name="CURRENCY" />
+                        <inputColumn name="TXN_DATE" />
+                        <inputColumn name="PERIOD" />
+                        <inputColumn name="FISCAL_YEAR" />
+                      </inputColumns>
+                    </input>
+                  </inputs>
+                </component>
+              </components>
+
+              <paths>
+                <path startId="GL Transactions Source.Outputs[OLE DB Source Output]"
+                      endId="Currency Conversion Script.Inputs[Script Component Input]" />
+                <path startId="Currency Conversion Script.Outputs[Script Component Output]"
+                      endId="GL Staging Dest.Inputs[OLE DB Destination Input]" />
+              </paths>
+            </pipeline>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- Data Flow: Excel exchange rates -->
+        <DTS:Executable
+          DTS:ObjectName="Import Exchange Rates"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000211}"
+          DTS:CreationName="Microsoft.Pipeline"
+          DTS:Description="Import daily exchange rates from Excel file">
+          <DTS:ObjectData>
+            <pipeline version="1">
+              <components>
+                <component name="Excel Rates Source" componentClassID="Microsoft.ExcelSource">
+                  <properties>
+                    <property name="OpenRowset">DailyRates$</property>
+                  </properties>
+                  <outputs>
+                    <output name="Excel Source Output">
+                      <outputColumns>
+                        <outputColumn name="CurrencyPair" dataType="str" length="7" />
+                        <outputColumn name="Rate" dataType="numeric" precision="18" scale="6" />
+                        <outputColumn name="EffectiveDate" dataType="dbTimeStamp" />
+                      </outputColumns>
+                    </output>
+                  </outputs>
+                </component>
+
+                <!-- Unpivot: convert wide format to tall -->
+                <component name="Unpivot Rates" componentClassID="Microsoft.UnPivot">
+                </component>
+
+                <component name="Rates Staging Dest" componentClassID="Microsoft.OLEDBDestination">
+                  <properties>
+                    <property name="OpenRowset">stg.Exchange_Rates</property>
+                  </properties>
+                </component>
+              </components>
+
+              <paths>
+                <path startId="Excel Rates Source.Outputs[Excel Source Output]"
+                      endId="Unpivot Rates.Inputs[Unpivot Default Input]" />
+                <path startId="Unpivot Rates.Outputs[Unpivot Default Output]"
+                      endId="Rates Staging Dest.Inputs[OLE DB Destination Input]" />
+              </paths>
+            </pipeline>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- Data Flow: CRM pipeline data with Pivot -->
+        <DTS:Executable
+          DTS:ObjectName="Extract CRM Pipeline"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000212}"
+          DTS:CreationName="Microsoft.Pipeline"
+          DTS:Description="Extract CRM opportunity pipeline and pivot by stage">
+          <DTS:ObjectData>
+            <pipeline version="1">
+              <components>
+                <component name="CRM Opportunities" componentClassID="Microsoft.ADONETSource">
+                  <properties>
+                    <property name="SqlCommand">SELECT OpportunityID, AccountID, StageName, Amount, Currency, CloseDate, OwnerID FROM dbo.Opportunity WHERE ModifiedDate > ?</property>
+                  </properties>
+                </component>
+
+                <!-- Pivot: opportunity amounts by stage -->
+                <component name="Pivot by Stage" componentClassID="Microsoft.Pivot">
+                </component>
+
+                <component name="CRM Staging Dest" componentClassID="Microsoft.OLEDBDestination">
+                  <properties>
+                    <property name="OpenRowset">stg.CRM_Pipeline</property>
+                  </properties>
+                </component>
+              </components>
+
+              <paths>
+                <path startId="CRM Opportunities.Outputs[ADO NET Source Output]"
+                      endId="Pivot by Stage.Inputs[Pivot Default Input]" />
+                <path startId="Pivot by Stage.Outputs[Pivot Default Output]"
+                      endId="CRM Staging Dest.Inputs[OLE DB Destination Input]" />
+              </paths>
+            </pipeline>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- FTP Task: download partner data -->
+        <DTS:Executable
+          DTS:ObjectName="Download Partner Files"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000213}"
+          DTS:CreationName="Microsoft.FtpTask"
+          DTS:Description="Download daily partner data files from FTP server">
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:Executable>
+
+    <!-- =========================================== -->
+    <!-- STAGE 3: Transform -->
+    <!-- =========================================== -->
+    <DTS:Executable
+      DTS:ObjectName="Stage 3 - Transform"
+      DTS:DTSID="{10000000-0001-0000-0000-000000000300}"
+      DTS:CreationName="STOCK:SEQUENCE"
+      DTS:Description="Apply business rules and transformations">
+
+      <DTS:Executables>
+        <!-- Execute Process: run external data quality tool -->
+        <DTS:Executable
+          DTS:ObjectName="Run Data Quality Checks"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000310}"
+          DTS:CreationName="Microsoft.ExecuteProcess"
+          DTS:Description="Run external DQ tool: C:\Tools\DataQuality\dq_check.exe --batch @BatchID">
+        </DTS:Executable>
+
+        <!-- Apply business rules via stored procs -->
+        <DTS:Executable
+          DTS:ObjectName="Apply Business Rules"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000311}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask"
+          DTS:Description="Execute business rule transformations on staged data">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{10000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="EXEC transform.sp_ApplyAllBusinessRules @BatchID = ?" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- For Loop: process 12 months for trend calculation -->
+        <DTS:Executable
+          DTS:ObjectName="Calculate Monthly Trends"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000312}"
+          DTS:CreationName="STOCK:FORLOOP"
+          DTS:Description="Process each month for rolling 12-month trend calculations">
+
+          <DTS:Executables>
+            <DTS:Executable
+              DTS:ObjectName="Calc Month Trend"
+              DTS:DTSID="{10000000-0001-0000-0000-000000000320}"
+              DTS:CreationName="Microsoft.ExecuteSQLTask"
+              DTS:Description="Calculate trend for current month">
+              <DTS:ObjectData>
+                <SQLTask:SqlTaskData
+                  xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+                  SQLTask:Connection="{10000000-0001-0000-0000-000000000012}"
+                  SQLTask:SqlStatementSource="EXEC transform.sp_CalculateMonthlyTrend @Month = ?, @BatchID = ?" />
+              </DTS:ObjectData>
+            </DTS:Executable>
+          </DTS:Executables>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:Executable>
+
+    <!-- =========================================== -->
+    <!-- STAGE 4: Load -->
+    <!-- =========================================== -->
+    <DTS:Executable
+      DTS:ObjectName="Stage 4 - Load"
+      DTS:DTSID="{10000000-0001-0000-0000-000000000400}"
+      DTS:CreationName="STOCK:SEQUENCE"
+      DTS:Description="Load transformed data into final DW tables">
+
+      <DTS:Executables>
+        <!-- Load dimensions -->
+        <DTS:Executable
+          DTS:ObjectName="Load All Dimensions"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000410}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask"
+          DTS:Description="Apply SCD to all dimensions">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{10000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="EXEC etl.sp_LoadAllDimensions @BatchID = ?" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- Data Flow: Load fact with all lookups -->
+        <DTS:Executable
+          DTS:ObjectName="Load Fact Financial"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000411}"
+          DTS:CreationName="Microsoft.Pipeline"
+          DTS:Description="Load financial fact table with dimension lookups and aggregations">
+          <DTS:ObjectData>
+            <pipeline version="1">
+              <components>
+                <component name="Transformed GL Source" componentClassID="Microsoft.OLEDBSource">
+                  <properties>
+                    <property name="SqlCommand">SELECT * FROM transform.vw_GL_ReadyToLoad WHERE BatchID = ?</property>
+                  </properties>
+                </component>
+
+                <component name="Lookup AccountSK" componentClassID="Microsoft.Lookup">
+                  <properties>
+                    <property name="SqlCommand">SELECT AccountCode, AccountSK, AccountName FROM dim.DimAccount</property>
+                  </properties>
+                </component>
+
+                <component name="Lookup CostCenterSK" componentClassID="Microsoft.Lookup">
+                  <properties>
+                    <property name="SqlCommand">SELECT CostCenterCode, CostCenterSK FROM dim.DimCostCenter</property>
+                  </properties>
+                </component>
+
+                <component name="Lookup CurrencySK" componentClassID="Microsoft.Lookup">
+                  <properties>
+                    <property name="SqlCommand">SELECT CurrencyCode, CurrencySK, ExchangeRate FROM dim.DimCurrency</property>
+                  </properties>
+                </component>
+
+                <component name="Calculate USD Amount" componentClassID="Microsoft.DerivedColumn">
+                  <outputs>
+                    <output name="Derived Column Output">
+                      <outputColumns>
+                        <outputColumn name="AmountUSD" dataType="numeric" precision="18" scale="2" />
+                        <outputColumn name="AmountLocal" dataType="numeric" precision="18" scale="2" />
+                      </outputColumns>
+                    </output>
+                  </outputs>
+                </component>
+
+                <component name="Aggregate by Account" componentClassID="Microsoft.Aggregate">
+                </component>
+
+                <component name="Fact_Financial Dest" componentClassID="Microsoft.OLEDBDestination">
+                  <properties>
+                    <property name="OpenRowset">fact.Fact_Financial</property>
+                  </properties>
+                  <inputs>
+                    <input name="OLE DB Destination Input">
+                      <inputColumns>
+                        <inputColumn name="AccountSK" />
+                        <inputColumn name="CostCenterSK" />
+                        <inputColumn name="CurrencySK" />
+                        <inputColumn name="DateSK" />
+                        <inputColumn name="AmountLocal" />
+                        <inputColumn name="AmountUSD" />
+                        <inputColumn name="TransactionCount" />
+                      </inputColumns>
+                    </input>
+                  </inputs>
+                </component>
+              </components>
+
+              <paths>
+                <path startId="Transformed GL Source.Outputs[OLE DB Source Output]"
+                      endId="Lookup AccountSK.Inputs[Lookup Input]" />
+                <path startId="Lookup AccountSK.Outputs[Lookup Match Output]"
+                      endId="Lookup CostCenterSK.Inputs[Lookup Input]" />
+                <path startId="Lookup CostCenterSK.Outputs[Lookup Match Output]"
+                      endId="Lookup CurrencySK.Inputs[Lookup Input]" />
+                <path startId="Lookup CurrencySK.Outputs[Lookup Match Output]"
+                      endId="Calculate USD Amount.Inputs[Derived Column Default Input]" />
+                <path startId="Calculate USD Amount.Outputs[Derived Column Output]"
+                      endId="Aggregate by Account.Inputs[Aggregate Default Input]" />
+                <path startId="Aggregate by Account.Outputs[Aggregate Output 1]"
+                      endId="Fact_Financial Dest.Inputs[OLE DB Destination Input]" />
+              </paths>
+            </pipeline>
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- Load CRM fact -->
+        <DTS:Executable
+          DTS:ObjectName="Load Fact Pipeline"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000412}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask"
+          DTS:Description="Load CRM pipeline fact from staging">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{10000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="EXEC etl.sp_LoadFactPipeline @BatchID = ?" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:Executable>
+
+    <!-- =========================================== -->
+    <!-- STAGE 5: Finalize -->
+    <!-- =========================================== -->
+    <DTS:Executable
+      DTS:ObjectName="Stage 5 - Finalize"
+      DTS:DTSID="{10000000-0001-0000-0000-000000000500}"
+      DTS:CreationName="STOCK:SEQUENCE"
+      DTS:Description="Archive files, update stats, send notifications">
+
+      <DTS:Executables>
+        <!-- File System: move processed files to archive -->
+        <DTS:Executable
+          DTS:ObjectName="Archive Processed Files"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000510}"
+          DTS:CreationName="Microsoft.FileSystemTask"
+          DTS:Description="Move processed source files to dated archive directory">
+        </DTS:Executable>
+
+        <!-- Rebuild indexes -->
+        <DTS:Executable
+          DTS:ObjectName="Maintain Indexes"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000511}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask"
+          DTS:Description="Reorganize indexes on fact tables">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{10000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="EXEC maint.sp_MaintainFactIndexes" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- Mark batch complete -->
+        <DTS:Executable
+          DTS:ObjectName="Complete Batch"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000512}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask"
+          DTS:Description="Mark ETL batch as successfully completed">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{10000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="EXEC etl.sp_CompleteBatch @BatchID = ?, @ErrorCount = ?" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+
+        <!-- Send notification -->
+        <DTS:Executable
+          DTS:ObjectName="Send Completion Email"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000513}"
+          DTS:CreationName="Microsoft.SendMailTask"
+          DTS:Description="Email ETL summary report to DW team">
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:Executable>
+
+  </DTS:Executables>
+
+  <!-- Precedence Constraints (with expression-based conditionals) -->
+  <DTS:PrecedenceConstraints>
+    <DTS:PrecedenceConstraint DTS:From="{10000000-0001-0000-0000-000000000100}" DTS:To="{10000000-0001-0000-0000-000000000200}" DTS:Value="0" />
+    <DTS:PrecedenceConstraint DTS:From="{10000000-0001-0000-0000-000000000200}" DTS:To="{10000000-0001-0000-0000-000000000300}" DTS:Value="0" />
+    <!-- Expression: only proceed to load if error count < threshold -->
+    <DTS:PrecedenceConstraint DTS:From="{10000000-0001-0000-0000-000000000300}" DTS:To="{10000000-0001-0000-0000-000000000400}" DTS:Value="0" DTS:Expression="@[User::ErrorCount] &lt; 100" />
+    <DTS:PrecedenceConstraint DTS:From="{10000000-0001-0000-0000-000000000400}" DTS:To="{10000000-0001-0000-0000-000000000500}" DTS:Value="0" />
+    <!-- On failure of Stage 3, skip to finalize -->
+    <DTS:PrecedenceConstraint DTS:From="{10000000-0001-0000-0000-000000000300}" DTS:To="{10000000-0001-0000-0000-000000000500}" DTS:Value="1" />
+  </DTS:PrecedenceConstraints>
+
+  <!-- Event Handlers: comprehensive error, warning, and task tracking -->
+  <DTS:EventHandlers>
+    <DTS:EventHandler DTS:EventName="OnError">
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:ObjectName="Log Error to DB"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000900}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{10000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="EXEC etl.sp_LogError @BatchID = ?, @Source = ?, @ErrorCode = ?, @ErrorDescription = ?" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:EventHandler>
+    <DTS:EventHandler DTS:EventName="OnWarning">
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:ObjectName="Log Warning"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000901}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{10000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="EXEC etl.sp_LogWarning @BatchID = ?, @Source = ?, @WarningMessage = ?" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:EventHandler>
+    <DTS:EventHandler DTS:EventName="OnPreExecute">
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:ObjectName="Track Task Start"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000902}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{10000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="EXEC etl.sp_TrackTaskExecution @BatchID = ?, @TaskName = ?, @Event = 'Start'" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:EventHandler>
+    <DTS:EventHandler DTS:EventName="OnPostExecute">
+      <DTS:Executables>
+        <DTS:Executable
+          DTS:ObjectName="Track Task End"
+          DTS:DTSID="{10000000-0001-0000-0000-000000000903}"
+          DTS:CreationName="Microsoft.ExecuteSQLTask">
+          <DTS:ObjectData>
+            <SQLTask:SqlTaskData
+              xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask"
+              SQLTask:Connection="{10000000-0001-0000-0000-000000000012}"
+              SQLTask:SqlStatementSource="EXEC etl.sp_TrackTaskExecution @BatchID = ?, @TaskName = ?, @Event = 'End'" />
+          </DTS:ObjectData>
+        </DTS:Executable>
+      </DTS:Executables>
+    </DTS:EventHandler>
+  </DTS:EventHandlers>
+
+</DTS:Executable>
