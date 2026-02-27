@@ -364,9 +364,25 @@ class DTSXParser:
     # =========================================================================
 
     def _parse_connection_managers(self, root: etree._Element, nsmap: dict) -> list[ConnectionManager]:
-        """Parse all connection managers from the package."""
-        managers = []
-        for cm_elem in self._find_dts(root, "ConnectionManager", nsmap):
+        """Parse all connection managers from the package.
+
+        DTSX files nest ``<DTS:ConnectionManager>`` elements inside a
+        ``<DTS:ConnectionManagers>`` container.  We look there first, then
+        fall back to direct children of *root* for backwards compatibility
+        (e.g. synthetic test files).
+        """
+        managers: list[ConnectionManager] = []
+        dts_ns = nsmap.get("DTS", "www.microsoft.com/SqlServer/Dts")
+
+        # Primary: look inside <DTS:ConnectionManagers> container
+        container_path = f"{{{dts_ns}}}ConnectionManagers/{{{dts_ns}}}ConnectionManager"
+        cm_elems = root.findall(container_path)
+
+        # Fallback: direct children (synthetic / test files)
+        if not cm_elems:
+            cm_elems = self._find_dts(root, "ConnectionManager", nsmap)
+
+        for cm_elem in cm_elems:
             cm = self._parse_single_connection_manager(cm_elem, nsmap)
             if cm:
                 managers.append(cm)

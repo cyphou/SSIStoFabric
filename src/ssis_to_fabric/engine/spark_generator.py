@@ -238,7 +238,7 @@ class SparkNotebookGenerator:
         if destinations:
             code_sections.append("# === Destination Writes ===")
             for dest in destinations:
-                code_sections.append(self._generate_destination_write(dest))
+                code_sections.append(self._generate_destination_write(dest, package))
 
         return code_sections
 
@@ -412,6 +412,12 @@ class SparkNotebookGenerator:
         else:
             lines.append('df = df.withColumn("new_column", F.lit(None))  # TODO: Add derived column logic')
         return "\n".join(lines)
+
+    @staticmethod
+    def _resolve_conn_var(name: str) -> str:
+        """Turn an SSIS connection manager name into a Python variable prefix."""
+        import re
+        return re.sub(r'[^a-zA-Z0-9_]', '_', name).strip('_').upper()
 
     def _gen_conditional_split(self, comp: DataFlowComponent) -> str:
         """Generate Conditional Split transformation code."""
@@ -641,11 +647,101 @@ class SparkNotebookGenerator:
             # Properties: {comp.properties}
         """)
 
-    def _generate_destination_write(self, comp: DataFlowComponent) -> str:
-        """Generate PySpark code to write to a destination."""
+    def _generate_destination_write(
+        self, comp: DataFlowComponent, package: SSISPackage | None = None,
+    ) -> str:
+        """Generate PySpark code to write to a destination.
+
+        The write strategy mirrors the SSIS connection type:
+        - OLE DB / ADO.NET → JDBC write using the connection's server/database
+        - Flat File → CSV write
+        - ODBC → JDBC write
+        - SQL Server (fast load) → JDBC write
+        - Others → generic delta/saveAsTable with TODO
+        """
         table = comp.table_name or comp.properties.get("OpenRowset", "target_table")
         safe_table = self._sanitize_name(table) if table else "target_table"
+        conn_ref = comp.connection_manager_ref
 
+        # Resolve connection manager from package
+        conn = None
+        if package and conn_ref:
+            for cm in package.connection_managers:
+                if cm.name == conn_ref or cm.id == conn_ref:
+                    conn = cm
+                    break
+
+        # --- Flat File Destination → CSV ---
+        if comp.component_type == DataFlowComponentType.FLAT_FILE_DESTINATION:
+            file_path = comp.properties.get("_file_path", "TODO_FILE_PATH")
+            if conn and not file_path.startswith("TODO"):
+                pass  # keep file_path from properties
+            elif conn:
+                file_path = conn.connection_string or file_path
+            return dedent(f'''\
+                # Destination: {comp.name} -> File: {file_path}
+                df.write \\
+                    .mode("overwrite") \\
+                    .option("header", "true") \\
+                    .csv("{file_path}")
+                logger.info("Data written to {file_path}")
+            ''')
+
+        # --- OLE DB / ADO.NET / SQL Server Destination → JDBC ---
+        if conn and conn.connection_type.value in ("OLEDB", "ADO.NET"):
+            prefix = self._resolve_conn_var(conn.name)
+            srv_var = f"{prefix}_SERVER"
+            db_var = f"{prefix}_DATABASE"
+            lines = [
+                f"# Destination: {comp.name} -> Table: {table}",
+                f"# Connection: {conn.name} ({conn.connection_type.value})",
+                f'_jdbc_url = f"jdbc:sqlserver://{{{srv_var}}};databaseName={{{db_var}}}"',
+                "df.write \\",
+                '    .mode("append") \\',
+                '    .format("jdbc") \\',
+                '    .option("url", _jdbc_url) \\',
+                f'    .option("dbtable", "{table}") \\',
+                '    .option("driver", "com.microsoft.sqlserver.jdbc.SQLServerDriver") \\',
+                "    .save()",
+                f'logger.info("Data written to {table} via JDBC")',
+            ]
+            return "\n".join(lines)
+
+        if comp.component_type == DataFlowComponentType.SQL_SERVER_DESTINATION:
+            prefix = self._resolve_conn_var(conn.name) if conn else "DEST"
+            srv_var = f"{prefix}_SERVER"
+            db_var = f"{prefix}_DATABASE"
+            lines = [
+                f"# Destination: {comp.name} -> Table: {table} (SQL Server fast load)",
+                f'_jdbc_url = f"jdbc:sqlserver://{{{srv_var}}};databaseName={{{db_var}}}"',
+                "df.write \\",
+                '    .mode("append") \\',
+                '    .format("jdbc") \\',
+                '    .option("url", _jdbc_url) \\',
+                f'    .option("dbtable", "{table}") \\',
+                '    .option("driver", "com.microsoft.sqlserver.jdbc.SQLServerDriver") \\',
+                '    .option("batchsize", "10000") \\',
+                "    .save()",
+                f'logger.info("Data written to {table} via JDBC (fast load)")',
+            ]
+            return "\n".join(lines)
+
+        # --- ODBC Destination → JDBC ---
+        if comp.component_type == DataFlowComponentType.ODBC_DESTINATION:
+            return dedent(f'''\
+                # Destination: {comp.name} -> Table: {table} (ODBC → JDBC)
+                # TODO: Update the JDBC URL for your environment
+                df.write \\
+                    .mode("append") \\
+                    .format("jdbc") \\
+                    .option("url", "jdbc:TODO_DRIVER://TODO_HOST:TODO_PORT/TODO_DB") \\
+                    .option("dbtable", "{table}") \\
+                    .option("driver", "TODO_JDBC_DRIVER") \\
+                    .save()
+                logger.info("Data written to {table} via JDBC")
+            ''')
+
+        # --- Default: delta / saveAsTable (Fabric Lakehouse) ---
         return dedent(f'''\
             # Destination: {comp.name} -> Table: {table}
             df.write \\
@@ -792,6 +888,41 @@ class SparkNotebookGenerator:
             return "F.lit(None)"
 
         result = expr.strip()
+
+        # @[$Package::VarName] → Python variable reference
+        m = _re.match(r'^@\[\$Package::([\w]+)\]$', result)
+        if m:
+            return f'F.lit({SparkNotebookGenerator._sanitize_name(m.group(1)).upper()})'
+        # @[User::VarName] → Python variable reference
+        m = _re.match(r'^@\[User::([\w]+)\]$', result)
+        if m:
+            return f'F.lit({SparkNotebookGenerator._sanitize_name(m.group(1)).upper()})'
+        # @[Namespace::VarName] — any namespace (e.g. SystemLog::intLoadID)
+        m = _re.match(r'^@\[[\w\$]+::([\w]+)\]$', result)
+        if m:
+            return f'F.lit({SparkNotebookGenerator._sanitize_name(m.group(1)).upper()})'
+        # @[VarName] — simple variable ref
+        m = _re.match(r'^@\[([\w]+)\]$', result)
+        if m:
+            return f'F.lit({SparkNotebookGenerator._sanitize_name(m.group(1)).upper()})'
+
+        # Inline references within larger expressions
+        result = _re.sub(
+            r'@\[\$Package::([\w]+)\]',
+            lambda mm: SparkNotebookGenerator._sanitize_name(mm.group(1)).upper(),
+            result,
+        )
+        result = _re.sub(
+            r'@\[User::([\w]+)\]',
+            lambda mm: SparkNotebookGenerator._sanitize_name(mm.group(1)).upper(),
+            result,
+        )
+        # Generic @[Namespace::Var] inline
+        result = _re.sub(
+            r'@\[[\w\$]+::([\w]+)\]',
+            lambda mm: SparkNotebookGenerator._sanitize_name(mm.group(1)).upper(),
+            result,
+        )
 
         # GETDATE() → F.current_timestamp()
         result = _re.sub(r"\bGETDATE\s*\(\s*\)", "F.current_timestamp()", result, flags=_re.IGNORECASE)
