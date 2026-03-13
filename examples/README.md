@@ -1,10 +1,18 @@
-# SSIS-to-Fabric Migration Examples
+<p align="center">
+  <img src="https://img.shields.io/badge/SSIS-CC2927?style=for-the-badge&logo=microsoftsqlserver&logoColor=white" alt="SSIS"/>
+  <img src="https://img.shields.io/badge/%E2%86%92-gray?style=for-the-badge" alt="arrow"/>
+  <img src="https://img.shields.io/badge/Microsoft%20Fabric-117A65?style=for-the-badge&logo=microsoftazure&logoColor=white" alt="Microsoft Fabric"/>
+</p>
 
-A collection of SSIS packages organized by complexity, designed to showcase
-the full spectrum of migration scenarios from simple copy operations to
-enterprise-grade multi-package orchestrations.
+<h1 align="center">SSIS-to-Fabric Migration Examples</h1>
 
-## Directory Structure
+<p align="center">
+  <strong>A collection of SSIS packages organized by complexity, showcasing the full spectrum of migration scenarios.</strong>
+</p>
+
+---
+
+## 📁 Directory Structure
 
 ```
 examples/
@@ -19,10 +27,11 @@ examples/
 ├── 09_cross_system_sync/     # Multi-system orchestration
 ├── 10_enterprise_etl/        # Enterprise-grade with error handling
 ├── 11_realtime_cdc/          # CDC (Change Data Capture) pattern
-└── 12_parent_child_packages/ # Master → child package orchestration
+├── 12_parent_child_packages/ # Master → child package orchestration
+└── full_ssis_project/        # 28 real VS-generated SSIS packages (MIT)
 ```
 
-## Complexity Levels
+## 📊 Complexity Levels
 
 | # | Example | Tasks | Data Flows | Complexity | Migration Target |
 |---|---------|-------|------------|------------|------------------|
@@ -39,7 +48,7 @@ examples/
 | 11 | Real-time CDC | 7 | 2 | HIGH | Spark |
 | 12 | Parent-Child | 6 | 0 | MEDIUM | Data Factory |
 
-## Running Examples
+## 🚀 Running Examples
 
 ```bash
 # Analyze a single example
@@ -54,3 +63,9 @@ ssis2fabric plan examples/05_fact_table_etl/ --output plan.json
 # Migrate all examples
 ssis2fabric migrate examples/ --strategy hybrid --output output/
 ```
+
+---
+
+<p align="center">
+  <sub>See the <a href="../README.md">main README</a> for full documentation.</sub>
+</p>

@@ -1,46 +1,239 @@
-# SSIS to Microsoft Fabric Migration Tool
+<p align="center">
+  <img src="https://img.shields.io/badge/SSIS-CC2927?style=for-the-badge&logo=microsoftsqlserver&logoColor=white" alt="SSIS"/>
+  <img src="https://img.shields.io/badge/%E2%86%92-gray?style=for-the-badge" alt="arrow"/>
+  <img src="https://img.shields.io/badge/Microsoft%20Fabric-117A65?style=for-the-badge&logo=microsoftazure&logoColor=white" alt="Microsoft Fabric"/>
+</p>
 
-Production-ready framework for migrating SQL Server Integration Services (SSIS) packages to Microsoft Fabric using **Data Factory pipelines**, **Dataflow Gen2**, and **Spark notebooks**.
+<h1 align="center">SSIS to Microsoft Fabric Migration</h1>
 
-> **492 tests** | **28 pipelines** | **28 notebooks** generated from the included example projects.
+<p align="center">
+  <strong>Migrate your SSIS packages to Microsoft Fabric in seconds — Data Factory pipelines, Dataflow Gen2, and Spark notebooks.</strong>
+</p>
 
----
+<p align="center">
+  <a href="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml"><img src="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
+  <img src="https://img.shields.io/badge/tests-492%20passed-brightgreen?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"/>
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"/>
+  <img src="https://img.shields.io/badge/version-1.1.0-blue?style=flat-square" alt="Version"/>
+  <img src="https://img.shields.io/badge/pipelines-28-orange?style=flat-square" alt="Pipelines"/>
+  <img src="https://img.shields.io/badge/notebooks-28-orange?style=flat-square" alt="Notebooks"/>
+</p>
 
-## Architecture
-
-```
-┌─────────────────┐     ┌──────────────┐     ┌─────────────────────────────┐
-│  SSIS Packages   │────▶│   Analyzer    │────▶│      Migration Engine       │
-│  (.dtsx files)   │     │  DTSXParser   │     │   (Routing & Orchestration) │
-│  + Project.params│     │              │     └──────────┬──────────────────┘
-└─────────────────┘     └──────────────┘                │
-        ▲                                 ┌─────────────┼──────────────┬──────────────┐
-        │                                 ▼             ▼              ▼              ▼
-┌───────┴─────────┐            ┌──────────────┐ ┌────────────┐ ┌────────────┐ ┌──────────┐
-│ SSISDB Extractor │            │ Data Factory │ │ Dataflow   │ │   Spark    │ │  Manual  │
-│ (catalog → .dtsx)│            │ Generator    │ │ Gen2       │ │ Notebook   │ │  Review  │
-└─────────────────┘            │ (Pipelines)  │ │ Generator  │ │ Generator  │ │  Report  │
-                               └──────┬───────┘ └──┬───┬─────┘ └──┬───┬────┘ └──────────┘
-                                      ▼            ▼   ▼           ▼   ▼
-                                pipeline.json  df.json  sidecar  nb.py  sidecar
-                                                     .destinations.json
-```
-
-### Output Artifacts
-
-| Artifact | Format | Description |
-|----------|--------|-------------|
-| **Pipelines** | Fabric JSON | One consolidated pipeline per SSIS package + orchestrator |
-| **Dataflows** | Dataflow Gen2 JSON | Power Query M for source + transformations (no destination — configured in Fabric UI) |
-| **Notebooks** | PySpark `.py` | Complex transformations (lookups, scripts, SCD) |
-| **Destination Manifests** | Sidecar JSON | Per-dataflow/notebook `*.destinations.json` with target table, columns, and connection ref |
-| **Migration Report** | JSON | Full traceability: task → artifact mapping |
+<p align="center">
+  <a href="#-quick-start">Quick Start</a> •
+  <a href="#-key-features">Features</a> •
+  <a href="#-how-it-works">How It Works</a> •
+  <a href="#-ssis-component-support">Component Support</a> •
+  <a href="#-deployment-phases">Deployment</a> •
+  <a href="#-testing">Testing</a> •
+  <a href="#-documentation">Docs</a>
+</p>
 
 ---
 
-## Features
+## ⚡ Quick Start
 
-### SSIS Component Support
+```bash
+# One command migration
+ssis2fabric migrate path/to/ssis_project/ --strategy hybrid --output ./output
+```
+
+> [!TIP]
+> The output includes Fabric JSON pipelines, PySpark notebooks, and Dataflow Gen2 definitions — ready for deployment.
+
+<details>
+<summary><b>📦 Installation</b></summary>
+
+```bash
+git clone <repo-url>
+cd SSISToFabric
+
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+# source .venv/bin/activate   # Linux/Mac
+
+pip install -e ".[dev]"
+```
+
+**Requirements:** Python 3.10+ • `lxml`, `pyyaml`, `pydantic`, `click`, `rich`
+
+</details>
+
+### More ways to migrate
+
+```bash
+# 🔍 Analyze packages first
+ssis2fabric analyze path/to/ssis_project/
+
+# 📋 Generate a plan without executing
+ssis2fabric plan path/to/ssis_project/ --strategy hybrid
+
+# 🚀 Migrate + deploy to Fabric in one shot
+ssis2fabric migrate path/to/project/ --strategy hybrid --output ./output
+ssis2fabric deploy ./output --workspace-id <workspace-guid>
+
+# 🔄 Extract packages from SSISDB catalog
+ssis2fabric extract-ssisdb "Driver={ODBC Driver 17};Server=myserver;..." -o ./extracted
+
+# ✅ Validate against approved baselines
+ssis2fabric validate tests/regression/baselines/ output/
+```
+
+### Python API (recommended)
+
+```python
+from ssis_to_fabric import SSISMigrator
+
+migrator = SSISMigrator(strategy="hybrid", output_dir="./output")
+result = migrator.migrate("path/to/ssis_project/")
+print(f"Generated {len([i for i in result.items if i.status == 'completed'])} artifacts")
+
+# One-shot: migrate + deploy
+migrator.run("path/to/ssis_project/", workspace_id="<workspace-guid>", clean=True)
+```
+
+---
+
+## 🎯 Key Features
+
+<table>
+<tr>
+<td width="50%">
+
+### 🔄 28+ SSIS Components
+Parses control flow & data flow tasks:
+Execute SQL, Execute Package, ForEach/For Loop, Sequence Containers, Data Flow (OLE DB, Flat File, Excel, ODBC, XML, CDC), Script Components, File System, FTP, Send Mail
+
+</td>
+<td width="50%">
+
+### ⚡ Expression Transpiler
+Converts SSIS expressions to both targets:
+Power Query M (`Text.Upper`, `DateTime.LocalNow`) and PySpark (`F.upper`, `F.current_timestamp`) — 40+ patterns including DATEADD, DATEDIFF, type casts, string ops
+
+</td>
+</tr>
+<tr>
+<td>
+
+### 🔌 12 Connection Types
+Handles all major SSIS connections:
+OLEDB, ADO.NET, Flat File, Excel, ODBC, FTP, HTTP, FILE, SMTP, Oracle, SharePoint, Analysis Services — auto-mapped to Fabric connections
+
+</td>
+<td>
+
+### 🚀 Multi-Phase Deployment
+Automated deployment to Fabric:
+Connection resolution → Folder creation → Dataflows → Notebooks → Leaf pipelines → Orchestrators — with dependency ordering & dry-run support
+
+</td>
+</tr>
+<tr>
+<td>
+
+### 🧠 Smart Routing
+Three migration strategies:
+**Hybrid** (default) routes simple flows to Dataflow Gen2, complex to Spark. **Data Factory** for pipeline-only. **Spark** for transformation-heavy packages.
+
+</td>
+<td>
+
+### 📋 Destination Sidecars
+Every dataflow/notebook gets a `.destinations.json`:
+Target table, column names, data types — enabling downstream Lakehouse provisioning without parsing M/PySpark code.
+
+</td>
+</tr>
+</table>
+
+> [!NOTE]
+> **28 pipelines** and **28 notebooks** generated from the included real SSIS example projects (MIT licensed).
+
+---
+
+## 🔧 How It Works
+
+```mermaid
+flowchart LR
+    A["📄 .dtsx files\nSSIS Packages"] --> B["🔍 ANALYZE\nDTSX Parser"]
+    P["📋 Project.params\nSSISDB Catalog"] -.-> B
+    B --> C["⚙️ GENERATE\nMigration Engine"]
+    C --> D["📊 Fabric Workspace\nPipelines + Notebooks"]
+    C -.-> E["🚀 DEPLOY\nFabric REST API"]
+
+    style A fill:#CC2927,color:#fff,stroke:#CC2927
+    style P fill:#CC2927,color:#fff,stroke:#CC2927
+    style D fill:#117A65,color:#fff,stroke:#117A65
+    style E fill:#117A65,color:#fff,stroke:#117A65
+    style B fill:#4B8BBE,color:#fff,stroke:#4B8BBE
+    style C fill:#4B8BBE,color:#fff,stroke:#4B8BBE
+```
+
+**Step 1 — Analyze:** Parses SSIS `.dtsx` XML into structured models (tasks, data flows, connections, parameters)
+
+**Step 2 — Generate:** Routes each task to the optimal Fabric artifact (Data Factory pipeline, Dataflow Gen2, or Spark notebook)
+
+**Step 3 — Deploy** *(optional):* Multi-phase deployment to Fabric workspace with dependency resolution
+
+### 📂 Generated Output
+
+```
+output/
+├── pipelines/                              ← One JSON per SSIS package + Master orchestrator
+│   ├── StgCustomer.json
+│   └── EP_Staging_orchestrator.json
+├── notebooks/                              ← PySpark notebooks for complex transforms
+│   ├── StgCustomer_dft_Staging.py
+│   └── StgCustomer_dft_Staging.destinations.json   ← Sidecar manifest
+├── connections/                            ← Auto-discovered connection definitions
+│   └── cmgr_Source.json
+└── migration_report.json                   ← Full traceability: task → artifact mapping
+```
+
+---
+
+## 🔧 Architecture
+
+<details>
+<summary><b>📁 Project structure</b> (click to expand)</summary>
+
+```
+SSISToFabric/
+├── src/ssis_to_fabric/
+│   ├── analyzer/                       # SSIS package parsing
+│   │   ├── models.py                  #   Data models (SSISPackage, Variable, Task, etc.)
+│   │   └── dtsx_parser.py            #   .dtsx XML parser + Project.params reader
+│   ├── engine/                         # Migration generators
+│   │   ├── migration_engine.py        #   Orchestration, routing & plan generation
+│   │   ├── data_factory_generator.py  #   ADF pipeline JSON generation
+│   │   ├── dataflow_generator.py      #   Dataflow Gen2 (Power Query M) + expression transpiler
+│   │   ├── spark_generator.py         #   PySpark notebook + expression transpiler
+│   │   ├── fabric_deployer.py         #   Fabric REST API deployment & folder organization
+│   │   └── ssisdb_extractor.py        #   SSISDB catalog .dtsx extraction (pyodbc)
+│   ├── testing/                        # Test framework
+│   │   └── regression_runner.py       #   Non-regression baseline validation
+│   ├── cli.py                          # CLI entry point (ssis2fabric)
+│   ├── api.py                          # Public Python API (SSISMigrator facade)
+│   ├── config.py                       # Configuration management
+│   └── logging_config.py              # Structured logging (structlog)
+├── tests/                              # 492 tests across unit + regression
+├── examples/                           # 12 scenarios + full SSIS project (28 packages)
+├── azure-pipelines.yml                 # Azure DevOps CI/CD
+├── .github/workflows/ci.yml           # GitHub Actions CI/CD
+├── migration_config.yaml               # Default configuration
+└── pyproject.toml                      # Python project config
+```
+
+</details>
+
+---
+
+## 📦 SSIS Component Support
+
+<details>
+<summary><b>📋 Full component mapping table</b> (click to expand)</summary>
 
 | SSIS Component | Fabric Target | Notes |
 |----------------|---------------|-------|
@@ -80,7 +273,12 @@ Production-ready framework for migrating SQL Server Integration Services (SSIS) 
 | Sequence Container | Flattened with dependency graph | Children promoted to top-level with correct `dependsOn` |
 | Precedence Constraints | `dependsOn` chains | Success/failure/completion semantics preserved |
 
-### Data Source & Connection Support
+</details>
+
+### 🔌 Data Source & Connection Support
+
+<details>
+<summary><b>📋 Full data source mapping table</b> (click to expand)</summary>
 
 | Source/Dest Type | Dataflow (M) | Spark (PySpark) | Copy Activity |
 |------------------|-------------|-----------------|---------------|
@@ -96,7 +294,9 @@ Production-ready framework for migrating SQL Server Integration Services (SSIS) 
 
 Connection types recognized by the parser: **OLEDB**, **ADO.NET**, **Flat File**, **Excel**, **ODBC**, **FTP**, **HTTP**, **FILE**, **SMTP**, **Oracle**, **SharePoint**, **Analysis Services**.
 
-### Parameter & Variable Support
+</details>
+
+### 🔗 Parameter & Variable Support
 
 The framework fully handles SSIS parameterization and parent-child orchestration:
 
@@ -109,7 +309,10 @@ The framework fully handles SSIS parameterization and parent-child orchestration
 | **ADF expressions** | `$Package::VarName` references become `@pipeline().parameters.VarName` |
 | **Variables** | SSIS variables (non-System) converted to pipeline variables |
 
-### SSIS Expression Transpiler
+### ⚡ SSIS Expression Transpiler
+
+<details>
+<summary><b>📋 Complete expression conversion table</b> (click to expand)</summary>
 
 SSIS expressions in Derived Columns, Conditional Splits, and other transforms are automatically converted to both **Power Query M** and **PySpark**:
 
@@ -150,7 +353,9 @@ SSIS expressions in Derived Columns, Conditional Splits, and other transforms ar
 
 Complex expressions that cannot be pattern-matched are emitted with `/* TODO */` comments.
 
-### Connection Mapping
+</details>
+
+### 🔗 Connection Mapping
 
 SSIS connection manager names can be mapped to Fabric connection IDs via `migration_config.yaml`:
 
@@ -210,7 +415,7 @@ Send_Success_Notification    → [Finalize_ETL_Batch]
 
 ---
 
-## Migration Strategies
+## 🔀 Migration Strategies
 
 | Strategy | Description | Best For |
 |----------|-------------|----------|
@@ -220,7 +425,7 @@ Send_Success_Notification    → [Finalize_ETL_Batch]
 
 ---
 
-## Deployment Phases
+## 🚀 Deployment Phases
 
 The deployer uses a multi-phase strategy that handles item dependencies and workspace organization:
 
@@ -240,30 +445,10 @@ Each item is moved into its workspace folder immediately after creation when the
 
 ---
 
-## Quick Start
+## 💻 Python API
 
-### 1. Install
-
-```bash
-git clone <repo-url>
-cd SSISToFabric
-
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-# source .venv/bin/activate   # Linux/Mac
-
-pip install -e ".[dev]"
-```
-
-### 2. Configure
-
-```bash
-cp .env.example .env
-# Edit .env with your Fabric workspace ID and credentials
-# Review migration_config.yaml for connection/threshold settings
-```
-
-### 3. Python API (recommended)
+<details>
+<summary><b>🔧 Full API reference</b> (click to expand)</summary>
 
 All operations are available as importable classes — no CLI required:
 
@@ -339,9 +524,24 @@ from ssis_to_fabric import (
 )
 ```
 
-### 4. CLI (alternative)
+</details>
 
-The CLI commands remain available for scripting or one-off use:
+---
+
+## 📝 CLI Reference
+
+<details>
+<summary><b>🔧 All CLI commands</b> (click to expand)</summary>
+
+| Command | Description |
+|---------|-------------|
+| `ssis2fabric analyze <path>` | Parse SSIS packages and display migration assessment |
+| `ssis2fabric plan <path>` | Generate a migration plan without executing |
+| `ssis2fabric migrate <path>` | Full migration: analyze, plan, generate artifacts |
+| `ssis2fabric deploy <output_dir>` | Deploy artifacts to a Fabric workspace |
+| `ssis2fabric verify <output_dir>` | Verify deployed artifacts exist in workspace |
+| `ssis2fabric validate <baseline> <output>` | Non-regression comparison against baselines |
+| `ssis2fabric extract-ssisdb <conn_str>` | Extract .dtsx packages from SSISDB catalog |
 
 ```bash
 # Analyze packages
@@ -368,157 +568,73 @@ ssis2fabric extract-ssisdb "Driver={ODBC Driver 17};Server=myserver;..." -o ./ex
 ssis2fabric extract-ssisdb "<conn-str>" --folder MyFolder --project MyProject
 ```
 
-This generates:
-```
-output/
-├── pipelines/                      # One JSON per package + Master orchestrator
-├── notebooks/                      # PySpark notebooks
-│   ├── MyPackage_LoadDim.py
-│   └── MyPackage_LoadDim.destinations.json   # Sidecar manifest
-├── connections/                    # Auto-discovered connection definitions
-└── migration_report.json
-```
+</details>
 
-### 5. Run Tests
+---
+
+## 🧪 Testing
+
+<p align="center">
+  <img src="https://img.shields.io/badge/tests-492%20passed-brightgreen?style=for-the-badge" alt="Tests"/>
+  <img src="https://img.shields.io/badge/unit%20tests-478-blue?style=for-the-badge" alt="Unit Tests"/>
+  <img src="https://img.shields.io/badge/regression-14-blue?style=for-the-badge" alt="Regression Tests"/>
+</p>
 
 ```bash
-# All tests (492)
-pytest tests/ -v
+pytest tests/ -v                                     # Run all 492 tests
+pytest tests/unit/ -v                                # Unit tests only
+pytest tests/unit/test_api.py -v                     # API facade tests
+pytest tests/unit/test_automation_features.py -v     # Expression transpiler tests
+pytest tests/regression/ -m regression -v            # Regression tests
+pytest tests/ --cov=ssis_to_fabric --cov-report=html # Coverage report
+```
 
-# API tests only
-pytest tests/unit/test_api.py -v
+<details>
+<summary><b>📋 Test suite breakdown</b> (click to expand)</summary>
 
-# Automation feature tests (expression transpiler, metadata wiring, etc.)
-pytest tests/unit/test_automation_features.py -v
+| Test File | Tests | Coverage |
+|-----------|-------|----------|
+| `test_spark_generator.py` | 91 | Notebook generation, transforms & code validity |
+| `test_automation_features.py` | 63 | Expression transpiler, metadata wiring, sidecar, FS/FTP |
+| `test_data_factory_generator.py` | 46 | Pipeline & folder organization |
+| `test_data_sources.py` | 40 | ODBC/XML/CDC/Raw/type-aware generators |
+| `test_dataflow_generator.py` | 36 | Dataflow Gen2 generation |
+| `test_api.py` | 34 | Python API facade |
+| `test_parameters_parent_child.py` | 27 | Parameter & parent-child bindings |
+| `test_dtsx_parser.py` | 26 | SSIS XML parser |
+| `test_migration_engine.py` | 19 | Engine routing & orchestration |
+| `test_non_regression.py` | 14 | Baseline comparison (regression) |
+| `test_config.py` | 6 | Configuration management |
+| + more | — | Additional edge case tests |
 
-# Compare against approved baselines
-ssis2fabric validate tests/regression/baselines/ output/
+</details>
+
+### CI/CD Pipeline
+
+```mermaid
+flowchart LR
+    L["🔍 Lint\nruff + mypy"] --> T["🧪 Test\n492 tests\nPy 3.10–3.12"]
+    T --> R["✅ Regression\nBaseline\nvalidation"]
+    R --> D["📦 Dry Run\nSample migration"]
+    D --> P["🚀 Deploy\nFabric workspace"]
+    
+    style L fill:#6366f1,color:#fff
+    style T fill:#22c55e,color:#fff
+    style R fill:#3b82f6,color:#fff
+    style D fill:#f59e0b,color:#000
+    style P fill:#ef4444,color:#fff
 ```
 
 ---
 
-## Project Structure
-
-```
-SSISToFabric/
-├── src/ssis_to_fabric/
-│   ├── analyzer/                       # SSIS package parsing
-│   │   ├── models.py                  # Data models (SSISPackage, Variable, Task, etc.)
-│   │   └── dtsx_parser.py            # .dtsx XML parser + Project.params reader
-│   ├── engine/                         # Migration generators
-│   │   ├── migration_engine.py        # Orchestration, routing & plan generation
-│   │   ├── data_factory_generator.py  # ADF pipeline JSON generation
-│   │   ├── dataflow_generator.py      # Dataflow Gen2 (Power Query M) generation + expression transpiler
-│   │   ├── spark_generator.py         # PySpark notebook generation + expression transpiler
-│   │   ├── fabric_deployer.py         # Fabric REST API deployment, folder organization & workspace verification
-│   │   └── ssisdb_extractor.py        # SSISDB catalog .dtsx extraction (pyodbc)
-│   ├── testing/                        # Test framework
-│   │   └── regression_runner.py       # Non-regression baseline validation
-│   ├── cli.py                          # CLI entry point (ssis2fabric)
-│   ├── api.py                          # Public Python API (SSISMigrator facade)
-│   ├── config.py                       # Configuration management
-│   └── logging_config.py              # Structured logging (structlog)
-├── tests/
-│   ├── unit/                           # 478 unit tests
-│   │   ├── test_dtsx_parser.py        # Parser tests (26 tests)
-│   │   ├── test_data_factory_generator.py  # Pipeline & folder organization tests (46 tests)
-│   │   ├── test_dataflow_generator.py # Dataflow Gen2 tests (36 tests)
-│   │   ├── test_spark_generator.py    # Notebook generation, transforms & code validity (91 tests)
-│   │   ├── test_migration_engine.py   # Engine routing & orchestration tests (19 tests)
-│   │   ├── test_parameters_parent_child.py  # Parameter & parent-child tests (27 tests)
-│   │   ├── test_api.py               # Python API facade tests (34 tests)
-│   │   ├── test_config.py            # Configuration tests (6 tests)
-│   │   ├── test_automation_features.py # Expression transpiler, metadata wiring, sidecar, FS/FTP (63 tests)
-│   │   └── test_data_sources.py       # ODBC/XML/CDC/Raw/type-aware generators (40 tests)
-│   ├── regression/                     # Non-regression baseline tests (14 tests)
-│   │   └── test_non_regression.py     # Baseline comparison tests
-│   └── fixtures/                       # Sample SSIS packages
-│       └── sample_packages/
-│           ├── simple_etl.dtsx        # Basic ETL package
-│           ├── complex_etl.dtsx       # Multi-source with lookups/scripts
-│           ├── parent_child.dtsx      # Parameter bindings & containers
-│           └── Project.params         # Project-level parameters
-├── examples/                           # 12 migration scenarios + full project
-│   ├── 01_simple_copy/                # Basic source-to-destination copy
-│   ├── 02_incremental_load/           # Parameterized incremental ETL
-│   ├── ...                            # (03 through 11)
-│   ├── 12_parent_child_packages/      # Master → child orchestration
-│   └── full_ssis_project/             # Real VS-generated SSIS packages (MIT)
-│       ├── SSISCookbook/              # 13 staging packages + orchestrator
-│       ├── AdventureWorksETL/         # 4 lookup & transform packages
-│       └── additional_packages/       # 11 standalone packages (Excel, FTP, etc.)
-├── output/                             # Generated migration artifacts (git-ignored)
-│   └── full_project_migration/
-│       ├── pipelines/     (28 files)  # One per SSIS package
-│       ├── notebooks/     (28 files)  # PySpark notebooks
-│       ├── connections/               # Auto-discovered connection definitions
-│       └── migration_report.json
-├── azure-pipelines.yml                 # Azure DevOps CI/CD
-├── .github/workflows/ci.yml          # GitHub Actions CI/CD
-├── migration_config.yaml               # Default configuration
-└── pyproject.toml                      # Python project config
-```
-
----
-
-## Non-Regression Testing
-
-The framework provides **three levels** of non-regression validation:
-
-### Level 1: File-Based Comparison
-Compares generated artifacts against approved baselines:
-- **JSON pipelines**: Deep structural diff (ignoring timestamps)
-- **Dataflow definitions**: Query structure comparison
-- **Python notebooks**: Line-by-line comparison (ignoring comments)
-
-### Level 2: Structural Validation
-Validates generated artifacts meet requirements:
-- Pipeline activities have required fields (`name`, `type`, `dependsOn`)
-- Parameters and variables sections are well-formed
-- ExecutePipeline activities pass correct parameter expressions
-- Notebooks have valid Python syntax
-
-### Level 3: Data Validation (Integration)
-Compares actual data between SSIS-processed and Fabric-processed outputs:
-- Row count comparison with configurable tolerance
-- Schema match validation
-- Sample data comparison
-
-### Running Tests
-
-```bash
-# All tests (492)
-pytest tests/ -v
-
-# Unit tests only
-pytest tests/unit/ -v
-
-# API facade tests
-pytest tests/unit/test_api.py -v
-
-# Automation features (expression transpiler, metadata, FS/FTP, sidecars)
-pytest tests/unit/test_automation_features.py -v
-
-# Parameter & parent-child tests
-pytest tests/unit/test_parameters_parent_child.py -v
-
-# Regression tests only
-pytest tests/regression/ -m regression -v
-
-# With coverage report
-pytest tests/ --cov=ssis_to_fabric --cov-report=html
-```
-
----
-
-## Real SSIS Project Examples
+## 📦 Real SSIS Project Examples
 
 The `examples/full_ssis_project/` directory contains **28 real Visual Studio-generated SSIS packages**
 from the [SQL Server 2017 Integration Services Cookbook](https://github.com/PacktPublishing/SQL-Server-2017-Integration-Services-Cookbook)
-(MIT License). These can be opened in **Visual Studio / SSDT** and contain proper metadata
-(`DTS:ExecutableType`, `DTS:refId`, `DTS:LocaleID`, `PackageFormatVersion 8`, etc.).
+(MIT License).
 
-### SSISCookbook (13 packages + orchestrator)
+<details>
+<summary><b>📋 SSISCookbook — 13 packages + orchestrator</b></summary>
 
 Complete staging ETL project with shared connection managers (`.conmgr`), sample CSV/XML data,
 and `EP_Staging.dtsx` as the Execute-Package orchestrator.
@@ -531,7 +647,10 @@ and `EP_Staging.dtsx` as the Execute-Package orchestrator.
 | StgProduct | OLE DB Source → Data Conversion → OLE DB Destination |
 | ... (10 more) | Staging loads with various transforms |
 
-### AdventureWorksETL (4 packages)
+</details>
+
+<details>
+<summary><b>📋 AdventureWorksETL — 4 packages</b></summary>
 
 | Package | Key Components |
 |---------|---------------|
@@ -540,7 +659,10 @@ and `EP_Staging.dtsx` as the Execute-Package orchestrator.
 | LookupCache | Lookup with Cache transform |
 | LookupExpression | Lookup with expression-based connection |
 
-### Additional Packages (11 standalone)
+</details>
+
+<details>
+<summary><b>📋 Additional Packages — 11 standalone</b></summary>
 
 | Package | Key Components |
 |---------|---------------|
@@ -556,34 +678,25 @@ and `EP_Staging.dtsx` as the Execute-Package orchestrator.
 | DataMining | Data Mining model training |
 | DataProfiling | Data Profiling task |
 
----
-
-## CI/CD
-
-### Azure DevOps (`azure-pipelines.yml`)
-1. **Build**: Lint → Type check → Unit tests → Regression tests
-2. **Dry Run**: Analyze & migrate sample packages
-3. **Deploy**: Deploy to Fabric workspace (on `main` branch)
-
-### GitHub Actions (`.github/workflows/ci.yml`)
-1. **Lint**: ruff + mypy
-2. **Test**: Unit tests across Python 3.10/3.11/3.12
-3. **Regression**: Non-regression validation
-4. **Dry Run**: Full migration of sample packages
+</details>
 
 ---
 
-## Extending
+## 🏗️ Extending
 
-### Adding New SSIS Component Support
+<details>
+<summary><b>🔧 Adding new SSIS components</b></summary>
 
-1. Add the component type to `DataFlowComponentType` in [models.py](src/ssis_to_fabric/analyzer/models.py)
-2. Add the class ID mapping in `COMPONENT_CLASS_MAP` in [dtsx_parser.py](src/ssis_to_fabric/analyzer/dtsx_parser.py)
-3. Add metadata extraction in `_extract_component_metadata()` in [dtsx_parser.py](src/ssis_to_fabric/analyzer/dtsx_parser.py)
+1. Add the component type to `DataFlowComponentType` in `src/ssis_to_fabric/analyzer/models.py`
+2. Add the class ID mapping in `COMPONENT_CLASS_MAP` in `src/ssis_to_fabric/analyzer/dtsx_parser.py`
+3. Add metadata extraction in `_extract_component_metadata()`
 4. Add generation logic in the appropriate generator (M in `dataflow_generator.py`, PySpark in `spark_generator.py`)
 5. Add unit tests and update regression baselines
 
-### Adding New SSIS Expression Patterns
+</details>
+
+<details>
+<summary><b>🔧 Adding new expression patterns</b></summary>
 
 The expression transpilers are in:
 - `DataflowGen2Generator._ssis_expr_to_m()` — converts SSIS expressions to Power Query M
@@ -591,44 +704,49 @@ The expression transpilers are in:
 
 Both use regex pattern matching. Add new patterns as `re.sub` or `re.match` blocks.
 
-### Adding New Control-Flow Task Types
+</details>
 
-1. Add the task class name in `TASK_CLASS_MAP` in [dtsx_parser.py](src/ssis_to_fabric/analyzer/dtsx_parser.py)
+<details>
+<summary><b>🔧 Adding new control-flow task types</b></summary>
+
+1. Add the task class name in `TASK_CLASS_MAP` in `src/ssis_to_fabric/analyzer/dtsx_parser.py`
 2. Add a `_parse_<task>()` method to extract properties from `<ObjectData>`
 3. Wire the parse call in `_parse_executable()`
-4. Add a `_<task>_to_activity()` method in [data_factory_generator.py](src/ssis_to_fabric/engine/data_factory_generator.py)
+4. Add a `_<task>_to_activity()` method in `src/ssis_to_fabric/engine/data_factory_generator.py`
 5. Wire both routed and non-routed dispatch
 
-### Connection Mapping
+</details>
 
-Map SSIS connection manager names to Fabric connection IDs in `migration_config.yaml`:
+---
 
-```yaml
-connection_mappings:
-  OLTPServer: "fabric-guid-1"
-  DWServer:   "fabric-guid-2"
+## 📚 Documentation
+
+| Document | Description |
+|----------|-------------|
+| 📖 [README](README.md) | This file — full project overview |
+| 🤝 [Contributing](CONTRIBUTING.md) | Development setup and guidelines |
+| 📝 [Changelog](CHANGELOG.md) | Release history |
+| 📋 [Examples](examples/README.md) | Migration scenario guide |
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+```bash
+git clone <repo-url>
+cd SSISToFabric
+pip install -e ".[dev]"
+pytest tests/ -v  # Make sure tests pass
 ```
 
-### Custom Migration Rules
-
-Override routing logic in `MigrationEngine._route_task()` to customize
-which components go to Data Factory, Dataflow Gen2, or Spark.
-
 ---
 
-## CLI Command Reference
-
-| Command | Description |
-|---------|-------------|
-| `ssis2fabric analyze <path>` | Parse SSIS packages and display migration assessment |
-| `ssis2fabric plan <path>` | Generate a migration plan without executing |
-| `ssis2fabric migrate <path>` | Full migration: analyze, plan, generate artifacts |
-| `ssis2fabric deploy <output_dir>` | Deploy artifacts to a Fabric workspace |
-| `ssis2fabric verify <output_dir>` | Verify deployed artifacts exist in workspace |
-| `ssis2fabric validate <baseline> <output>` | Non-regression comparison against baselines |
-| `ssis2fabric extract-ssisdb <conn_str>` | Extract .dtsx packages from SSISDB catalog |
-
----
+<p align="center">
+  <sub>Built with ❤️ for the Microsoft Fabric community</sub><br/>
+  <sub>If this tool saves you time, consider giving it a ⭐</sub>
+</p>
 
 ## License
 
