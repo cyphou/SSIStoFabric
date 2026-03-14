@@ -10,12 +10,10 @@
 
 
 # --- Imports ---
-from pyspark.sql import SparkSession, DataFrame
+import logging
+
 from pyspark.sql import functions as F
 from pyspark.sql.types import *
-from pyspark.sql.window import Window
-from datetime import datetime
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +82,7 @@ FROM            SalesLT.ProductDescription AS p INNER JOIN
 WHERE        (pm.Culture IN (N'en', N'fr'))
 ORDER BY p.ProductDescriptionID""") \
     .load()
-logger.info(f"Read {{count}} rows from ole_src_SalesLT_ProductDescription", count=df_source_ole_src_saleslt_productdescription.count())
+logger.info("Read {count} rows from ole_src_SalesLT_ProductDescription", count=df_source_ole_src_saleslt_productdescription.count())
 
 df = df_source_ole_src_saleslt_productdescription
 

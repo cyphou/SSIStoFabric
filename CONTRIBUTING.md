@@ -60,7 +60,7 @@ src/ssis_to_fabric/
 ├── api.py            → Public Python API (SSISMigrator facade)
 ├── config.py         → Configuration management (Pydantic)
 └── logging_config.py → Structured logging (structlog)
-tests/                → 806 tests (792 unit + 14 regression)
+tests/                → 836 tests (822 unit + 14 regression)
 examples/             → 12 scenarios + 28 real SSIS packages
 ```
 
@@ -92,7 +92,7 @@ mypy src/ssis_to_fabric/ --ignore-missing-imports  # Type check
 ## 🧪 Testing
 
 ```bash
-# All tests (806+)
+# All tests (836+)
 pytest tests/ -v
 
 # Unit tests only

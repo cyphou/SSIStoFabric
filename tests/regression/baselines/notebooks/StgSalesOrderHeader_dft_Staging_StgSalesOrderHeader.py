@@ -10,12 +10,10 @@
 
 
 # --- Imports ---
-from pyspark.sql import SparkSession, DataFrame
+import logging
+
 from pyspark.sql import functions as F
 from pyspark.sql.types import *
-from pyspark.sql.window import Window
-from datetime import datetime
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +81,7 @@ df_source_ole_src_saleslt_salesorderheader = spark.read.format("jdbc") \
 FROM            SalesLT.SalesOrderHeader
 ORDER BY SalesOrderID""") \
     .load()
-logger.info(f"Read {{count}} rows from ole_src_SalesLT_SalesOrderHeader", count=df_source_ole_src_saleslt_salesorderheader.count())
+logger.info("Read {count} rows from ole_src_SalesLT_SalesOrderHeader", count=df_source_ole_src_saleslt_salesorderheader.count())
 
 df = df_source_ole_src_saleslt_salesorderheader
 

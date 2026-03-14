@@ -11,6 +11,7 @@ from pathlib import Path
 
 import click
 from rich.console import Console
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
 from ssis_to_fabric.analyzer.dtsx_parser import DTSXParser
@@ -217,10 +218,45 @@ def migrate(
         from ssis_to_fabric.engine.agents import AgentOrchestrator
 
         orchestrator = AgentOrchestrator(config, max_workers=config.parallel_workers)
-        result = orchestrator.run(packages)
+        engine = MigrationEngine(config)
+        pre_plan = engine.create_plan(packages)
+        total_items = len(pre_plan.items)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task_id = progress.add_task("[cyan]Migrating...", total=total_items)
+
+            def _on_progress(event: str, data: dict) -> None:  # type: ignore[type-arg]
+                if event == "item_completed":
+                    progress.advance(task_id)
+
+            result = orchestrator.run(packages, plan=pre_plan, progress_callback=_on_progress)
     else:
         engine = MigrationEngine(config)
-        result = engine.execute(packages)
+        pre_plan = engine.create_plan(packages)
+        total_items = len(pre_plan.items)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task_id = progress.add_task("[cyan]Migrating...", total=total_items)
+
+            def _on_progress(event: str, data: dict) -> None:  # type: ignore[type-arg]
+                if event == "item_completed":
+                    progress.advance(task_id)
+
+            result = engine.execute(packages, plan=pre_plan, progress_callback=_on_progress)
 
     # Display results
     table = Table(title="Migration Results")
@@ -244,7 +280,10 @@ def migrate(
         )
 
     console.print(table)
+    elapsed_s = result.total_elapsed_ms / 1000 if result.total_elapsed_ms else 0
     console.print(f"\nOutput directory: [bold]{config.output_dir}[/bold]")
+    if elapsed_s:
+        console.print(f"Elapsed: [bold]{elapsed_s:.1f}s[/bold]  ·  Correlation ID: [dim]{result.correlation_id}[/dim]")
 
 
 @main.command()

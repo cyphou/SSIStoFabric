@@ -10,12 +10,9 @@
 
 
 # --- Imports ---
-from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql import functions as F
-from pyspark.sql.types import *
-from pyspark.sql.window import Window
-from datetime import datetime
 import logging
+
+from pyspark.sql.types import *
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +40,7 @@ def _get_param(name: str, default: str = '') -> str:
 
 COUNTRYNAME = _get_param("CountryName", "France")
 JSONFILENAMEFORMAT = _get_param("JSONFileNameFormat", "AirportInfo_{0:D3}.JSON")
-JSONFILEPATH = _get_param("JSONFilePath", "C:\SSIS2016Cookbook\Chapter07\Files")
+JSONFILEPATH = _get_param("JSONFilePath", r"C:\SSIS2016Cookbook\Chapter07\Files")
 
 # --- Fabric Connections ---
 # Map SSIS connection managers to Fabric connection IDs.

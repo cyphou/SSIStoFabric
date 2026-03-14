@@ -18,7 +18,7 @@ from ssis_to_fabric.engine.agents import (
     PipelineAgent,
     SparkAgent,
 )
-from ssis_to_fabric.engine.migration_engine import MigrationPlan, TargetArtifact
+from ssis_to_fabric.engine.migration_engine import TargetArtifact
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "sample_packages"
 

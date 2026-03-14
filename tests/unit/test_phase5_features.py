@@ -26,7 +26,6 @@ from ssis_to_fabric.analyzer.models import (
     MigrationComplexity,
     SSISPackage,
     TaskType,
-    Variable,
 )
 from ssis_to_fabric.cli import main
 from ssis_to_fabric.config import MigrationConfig, MigrationStrategy

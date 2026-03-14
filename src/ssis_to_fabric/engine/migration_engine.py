@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -67,6 +68,13 @@ class MigrationItem:
     output_path: str = ""
     status: str = "pending"
     notes: list[str] = field(default_factory=list)
+    started_at: str = ""
+    completed_at: str = ""
+    elapsed_ms: float = 0.0
+
+
+# Type alias for progress callbacks used by the engine and agents.
+ProgressCallback = Any  # Callable[[str, dict[str, Any]], None] | None
 
 
 @dataclass
@@ -79,6 +87,9 @@ class MigrationPlan:
     items: list[MigrationItem] = field(default_factory=list)
     summary: dict[str, Any] = field(default_factory=dict)
     errors: list[MigrationError] = field(default_factory=list)
+    completed_at: str = ""
+    total_elapsed_ms: float = 0.0
+    correlation_id: str = ""
 
     def add_error(self, source: str, severity: str, message: str, suggested_fix: str = "") -> None:
         """Append a structured error/warning to the plan."""
@@ -99,6 +110,9 @@ class MigrationPlan:
                     "output_path": item.output_path,
                     "status": item.status,
                     "notes": item.notes,
+                    "started_at": item.started_at,
+                    "completed_at": item.completed_at,
+                    "elapsed_ms": item.elapsed_ms,
                 }
             )
         errors_list = [
@@ -113,6 +127,9 @@ class MigrationPlan:
         return {
             "project_name": self.project_name,
             "created_at": self.created_at,
+            "completed_at": self.completed_at,
+            "total_elapsed_ms": self.total_elapsed_ms,
+            "correlation_id": self.correlation_id,
             "strategy": self.strategy,
             "items": items_list,
             "summary": self.summary,
@@ -288,6 +305,7 @@ class MigrationEngine:
         *,
         incremental: bool = False,
         state_dir: Path | None = None,
+        progress_callback: ProgressCallback = None,
     ) -> MigrationPlan:
         """
         Execute the migration: generate all Fabric artifacts.
@@ -306,11 +324,28 @@ class MigrationEngine:
                 files against persisted state and skip unchanged packages.
             state_dir: Directory for ``state.json``; defaults to
                 ``.ssis2fabric/`` in the current working directory.
+            progress_callback: Optional callable ``(event: str, data: dict) -> None``
+                invoked on ``item_started``, ``item_completed``, ``phase_completed``.
         Returns:
             Updated migration plan with execution status.
         """
+        from ssis_to_fabric.logging_config import bind_correlation_id, write_audit_entry
+
+        execution_start = time.monotonic()
+
         if plan is None:
             plan = self.create_plan(packages)
+
+        # Bind correlation ID for structured log context
+        cid = bind_correlation_id()
+        plan.correlation_id = cid
+
+        write_audit_entry("migration_started", detail={
+            "project": plan.project_name,
+            "strategy": plan.strategy,
+            "packages": len(packages),
+            "items": len(plan.items),
+        })
 
         output_dir = self.config.output_dir
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -371,6 +406,8 @@ class MigrationEngine:
         pkg_map = {pkg.name: pkg for pkg in packages}
 
         # --- Phase 1: Generate standalone artifacts (dataflows, notebooks) ---
+        _cb = progress_callback
+        phase1_start = time.monotonic()
         for item in plan.items:
             try:
                 package = pkg_map.get(item.source_package)
@@ -380,6 +417,11 @@ class MigrationEngine:
                     continue
 
                 task = self._find_task(package.control_flow_tasks, item.source_task)
+
+                item.started_at = datetime.now(tz=timezone.utc).isoformat()
+                item_start = time.monotonic()
+                if _cb:
+                    _cb("item_started", {"package": item.source_package, "task": item.source_task})
 
                 if item.target_artifact == TargetArtifact.DATAFLOW_GEN2:
                     output_path = self.dataflow_generator.generate(package, task, output_dir)
@@ -399,8 +441,20 @@ class MigrationEngine:
                     # Inline activities — generated as part of the package pipeline in Phase 2
                     item.status = "pending_pipeline"
 
+                item.elapsed_ms = (time.monotonic() - item_start) * 1000
+                item.completed_at = datetime.now(tz=timezone.utc).isoformat()
+                if _cb:
+                    _cb("item_completed", {
+                        "package": item.source_package,
+                        "task": item.source_task,
+                        "status": item.status,
+                        "elapsed_ms": item.elapsed_ms,
+                    })
+
             except Exception as e:
                 item.status = "error"
+                item.elapsed_ms = (time.monotonic() - item_start) * 1000 if 'item_start' in dir() else 0
+                item.completed_at = datetime.now(tz=timezone.utc).isoformat()
                 item.notes.append(f"Generation error: {str(e)}")
                 logger.error("generation_failed", task=item.source_task, error=str(e))
                 plan.add_error(
@@ -410,7 +464,12 @@ class MigrationEngine:
                     suggested_fix="Check the SSIS component structure and generator logs.",
                 )
 
+        phase1_ms = (time.monotonic() - phase1_start) * 1000
+        if _cb:
+            _cb("phase_completed", {"phase": "phase1_standalone", "elapsed_ms": phase1_ms})
+
         # --- Phase 2: Generate consolidated pipelines (one per package) ---
+        phase2_start = time.monotonic()
         for package in packages:
             try:
                 # Build task routing from plan items
@@ -419,13 +478,25 @@ class MigrationEngine:
                     if item.source_package == package.name:
                         task_routing[item.source_task] = item.target_artifact
 
+                p2_start = time.monotonic()
                 pipeline_path = self.df_generator.generate_package_pipeline(package, task_routing, output_dir)
+                p2_elapsed = (time.monotonic() - p2_start) * 1000
 
                 # Mark inline items as completed with pipeline path
                 for item in plan.items:
                     if item.source_package == package.name and item.status == "pending_pipeline":
                         item.output_path = str(pipeline_path)
                         item.status = "completed"
+                        item.elapsed_ms = p2_elapsed
+                        item.completed_at = datetime.now(tz=timezone.utc).isoformat()
+
+                if _cb:
+                    _cb("item_completed", {
+                        "package": package.name,
+                        "task": "pipeline",
+                        "status": "completed",
+                        "elapsed_ms": p2_elapsed,
+                    })
 
             except Exception as e:
                 for item in plan.items:
@@ -439,6 +510,10 @@ class MigrationEngine:
                     message=f"Pipeline generation error: {e}",
                     suggested_fix="Review the package structure and Data Factory generator logs.",
                 )
+
+        phase2_ms = (time.monotonic() - phase2_start) * 1000
+        if _cb:
+            _cb("phase_completed", {"phase": "phase2_pipelines", "elapsed_ms": phase2_ms})
 
         # --- Phase 3: Generate connection manifests ---
         self._generate_connection_manifests(packages, output_dir)
@@ -456,14 +531,32 @@ class MigrationEngine:
             _save_migration_state(_state_dir, new_state)
 
         # Write migration report
+        plan.completed_at = datetime.now(tz=timezone.utc).isoformat()
+        plan.total_elapsed_ms = (time.monotonic() - execution_start) * 1000
         self._write_report(plan, output_dir)
 
+        completed_count = sum(1 for i in plan.items if i.status == "completed")
+        error_count = sum(1 for i in plan.items if i.status == "error")
+        manual_count = sum(1 for i in plan.items if i.status == "manual_review_required")
         logger.info(
             "migration_completed",
-            completed=sum(1 for i in plan.items if i.status == "completed"),
-            errors=sum(1 for i in plan.items if i.status == "error"),
-            manual=sum(1 for i in plan.items if i.status == "manual_review_required"),
+            completed=completed_count,
+            errors=error_count,
+            manual=manual_count,
+            elapsed_ms=plan.total_elapsed_ms,
         )
+        write_audit_entry("migration_completed", detail={
+            "completed": completed_count,
+            "errors": error_count,
+            "manual": manual_count,
+            "elapsed_ms": round(plan.total_elapsed_ms, 1),
+        })
+        if _cb:
+            _cb("migration_completed", {
+                "elapsed_ms": plan.total_elapsed_ms,
+                "completed": completed_count,
+                "errors": error_count,
+            })
         return plan
 
     # =========================================================================

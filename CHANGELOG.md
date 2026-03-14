@@ -11,13 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > The following phases are planned. Each will be released as a minor or major version.
 
-### Phase 7 — Observability & Diagnostics *(v1.5.0)*
-- OpenTelemetry tracing with correlation IDs across agents and generators
-- Per-artifact performance metrics (parse time, generate time, deploy time)
-- Interactive HTML report with embedded charts (SVG sparklines, status pie charts)
-- Audit logging (who ran what migration, when, with which config)
-- Progress callbacks for long-running operations (CLI progress bars, API hooks)
-
 ### Phase 8 — Expression & Transpiler Completeness *(v1.6.0)*
 - Bitwise operators (`BITAND`, `BITOR`, `BITXOR`) in both PySpark and M
 - Deeply nested expression handling (10+ levels) with stack-based evaluator
@@ -86,6 +79,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migration cookbook (common SSIS patterns with before/after code comparisons)
 - JSON Schema export for `migration_config.yaml` validation by external tools
 - VS Code extension (inline assessment, syntax highlighting for generated artifacts)
+
+---
+
+## [1.5.0] - 2026-03-14
+
+### ✨ Phase 7 — Observability & Diagnostics
+
+#### Correlation IDs
+- UUID-based correlation IDs (`ssis2fabric-<uuid4>`) bound via `contextvars` and threaded through structlog
+- `bind_correlation_id()`, `get_correlation_id()`, `clear_correlation_id()` in `logging_config.py`
+- Correlation ID attached to every log entry and included in migration plan / HTML report
+
+#### Per-Artifact Timing Metrics
+- `MigrationItem`: new `started_at`, `completed_at`, `elapsed_ms` fields — per-item wall-clock timing
+- `MigrationPlan`: new `completed_at`, `total_elapsed_ms`, `correlation_id` fields
+- `OrchestratorStats`: new `total_elapsed_ms`, `phase1_elapsed_ms`, `phase2_elapsed_ms` fields
+- All timing fields serialized in `to_dict()` and `migration_report.json`
+
+#### Progress Callbacks
+- `ProgressCallback` type alias (`Callable[[str, dict], None]`) for event hooks
+- `MigrationEngine.execute()`: emits `item_started`, `item_completed`, `phase_completed`, `migration_completed` events
+- `AgentOrchestrator.run()`: emits same events through parallel phases
+- `SSISMigrator.migrate()` / `run()`: `progress_callback` parameter threaded to engine / orchestrator
+- CLI: Rich progress bar with spinner, task counter, and elapsed time during migration
+
+#### Audit Logging
+- JSON-lines audit trail via `configure_audit_log()` / `write_audit_entry()`
+- Structured entries: `{timestamp, correlation_id, action, detail}`
+- Audit entries written at migration start and completion in both engine and orchestrator
+
+#### Enhanced HTML Report
+- Timing header: total elapsed time and correlation ID displayed at top of report
+- Inline SVG donut chart for status distribution (completed / errors / manual / other)
+- Per-item "Time" column showing elapsed_ms for each migration artifact
 
 ---
 

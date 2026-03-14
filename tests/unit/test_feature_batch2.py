@@ -12,18 +12,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from ssis_to_fabric.config import MigrationConfig, MigrationStrategy
-from ssis_to_fabric.engine.agents import AgentResult, AgentRole, DeployAgent
+from ssis_to_fabric.engine.agents import AgentRole, DeployAgent
 from ssis_to_fabric.engine.csharp_transpiler import CSharpTranspiler
 from ssis_to_fabric.engine.fabric_deployer import (
     DeploymentReport,
     DeploymentResult,
 )
-
 
 # =========================================================================
 # Fixtures

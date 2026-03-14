@@ -15,7 +15,6 @@ Tests for:
 from __future__ import annotations
 
 import json
-import textwrap
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -23,19 +22,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ssis_to_fabric.analyzer.models import (
-    ConnectionManager,
-    ConnectionType,
     ControlFlowTask,
     DataFlowComponent,
     DataFlowComponentType,
     DataFlowPath,
-    EventHandler,
     MigrationComplexity,
     SSISPackage,
     TaskType,
 )
 from ssis_to_fabric.config import MigrationConfig
-
 
 # =====================================================================
 # Helpers

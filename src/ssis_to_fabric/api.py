@@ -222,6 +222,7 @@ class SSISMigrator:
         path: str | Path,
         *,
         plan: MigrationPlan | None = None,
+        progress_callback: Any | None = None,
     ) -> MigrationPlan:
         """
         End-to-end migration: parse → plan → generate Fabric artifacts.
@@ -232,6 +233,10 @@ class SSISMigrator:
             SSIS package file or project directory.
         plan : MigrationPlan, optional
             Pre-computed plan.  If *None* a new plan is created automatically.
+        progress_callback : callable, optional
+            ``(event: str, data: dict) -> None`` invoked on
+            ``item_started``, ``item_completed``, ``phase_completed``,
+            ``migration_completed``.
 
         Returns
         -------
@@ -246,8 +251,8 @@ class SSISMigrator:
             orchestrator = AgentOrchestrator(
                 self._config, max_workers=self._config.parallel_workers,
             )
-            return orchestrator.run(packages, plan=plan)
-        return self._engine.execute(packages, plan=plan)
+            return orchestrator.run(packages, plan=plan, progress_callback=progress_callback)
+        return self._engine.execute(packages, plan=plan, progress_callback=progress_callback)
 
     # ------------------------------------------------------------------
     # 4. Deploy
@@ -382,6 +387,7 @@ class SSISMigrator:
         clean: bool = False,
         dry_run: bool = False,
         credential: object | None = None,
+        progress_callback: Any | None = None,
     ) -> MigrationPlan:
         """
         Convenience: migrate and optionally deploy in one call.
@@ -398,13 +404,15 @@ class SSISMigrator:
             Simulate deployment.
         credential : object, optional
             Azure credential for deployment.
+        progress_callback : callable, optional
+            ``(event: str, data: dict) -> None`` invoked during migration.
 
         Returns
         -------
         MigrationPlan
             Completed migration plan.
         """
-        result = self.migrate(path)
+        result = self.migrate(path, progress_callback=progress_callback)
 
         if workspace_id:
             self.deploy(

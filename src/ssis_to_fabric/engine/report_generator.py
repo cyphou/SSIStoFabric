@@ -82,7 +82,8 @@ _HTML_TEMPLATE = """\
 <header>
   <h1>📊 SSIStoFabric Migration Report</h1>
   <p>Project: <strong>{project_name}</strong> &nbsp;·&nbsp; Strategy: {strategy}
-     &nbsp;·&nbsp; Generated: {generated_at}</p>
+     &nbsp;·&nbsp; Generated: {generated_at}
+     {timing_header}</p>
 </header>
 <main>
 
@@ -97,6 +98,9 @@ _HTML_TEMPLATE = """\
   <div class="card blue"><div class="num">{dataflow_gen2}</div><div class="lbl">Dataflows</div></div>
   <div class="card yellow"><div class="num">{todo_count}</div><div class="lbl">TODO Items</div></div>
 </div>
+
+<!-- Status chart (inline SVG) -->
+{status_chart}
 
 <!-- Complexity breakdown -->
 <section>
@@ -118,6 +122,7 @@ _HTML_TEMPLATE = """\
       <th>Target</th>
       <th>Complexity</th>
       <th>Status</th>
+      <th>Time</th>
       <th>Notes</th>
     </tr>
     {item_rows}
@@ -202,6 +207,19 @@ class ReportGenerator:
         error_count = status_counts.get("error", 0)
         manual = status_counts.get("manual_review_required", 0)
 
+        # Timing header
+        total_elapsed = report.get("total_elapsed_ms", 0)
+        cid = report.get("correlation_id", "")
+        timing_parts = []
+        if total_elapsed:
+            timing_parts.append(f"Elapsed: <strong>{total_elapsed / 1000:.1f}s</strong>")
+        if cid:
+            timing_parts.append(f"ID: <code>{_esc(cid)}</code>")
+        timing_header = ("&nbsp;·&nbsp; " + " &nbsp;·&nbsp; ".join(timing_parts)) if timing_parts else ""
+
+        # SVG status pie chart
+        status_chart = self._render_status_chart(completed, error_count, manual, total)
+
         # Complexity rows
         complexity_rows = ""
         for cplx, count in sorted(complexity_counts.items()):
@@ -213,7 +231,7 @@ class ReportGenerator:
         if not complexity_rows:
             complexity_rows = "<tr><td colspan='3'>No items</td></tr>"
 
-        # Item rows
+        # Item rows (with timing column)
         item_rows = ""
         for item in items:
             status = item.get("status", "")
@@ -221,6 +239,8 @@ class ReportGenerator:
             cplx = item.get("complexity", "")
             cplx_cls = _COMPLEXITY_BADGE.get(cplx, "badge-grey")
             notes_html = "<br>".join(item.get("notes", []))
+            elapsed_ms = item.get("elapsed_ms", 0)
+            time_str = f"{elapsed_ms:.0f}ms" if elapsed_ms else "-"
             item_rows += (
                 f"<tr>"
                 f"<td>{_esc(item.get('source_package', ''))}</td>"
@@ -229,11 +249,12 @@ class ReportGenerator:
                 f"<td>{_esc(item.get('target_artifact', ''))}</td>"
                 f"<td><span class='badge {cplx_cls}'>{_esc(cplx)}</span></td>"
                 f"<td><span class='badge {badge_cls}'>{_esc(status)}</span></td>"
+                f"<td>{time_str}</td>"
                 f"<td>{notes_html}</td>"
                 f"</tr>\n"
             )
         if not item_rows:
-            item_rows = "<tr><td colspan='7'>No items</td></tr>"
+            item_rows = "<tr><td colspan='8'>No items</td></tr>"
 
         # Errors section
         if errors:
@@ -261,6 +282,8 @@ class ReportGenerator:
             project_name=_esc(report.get("project_name", "Unknown")),
             strategy=_esc(report.get("strategy", "")),
             generated_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            timing_header=timing_header,
+            status_chart=status_chart,
             total=total,
             completed=completed,
             errors=error_count,
@@ -272,6 +295,61 @@ class ReportGenerator:
             complexity_rows=complexity_rows,
             item_rows=item_rows,
             errors_section=errors_section,
+        )
+
+    @staticmethod
+    def _render_status_chart(completed: int, errors: int, manual: int, total: int) -> str:
+        """Render an inline SVG donut chart showing status distribution."""
+        if total == 0:
+            return ""
+        other = max(0, total - completed - errors - manual)
+        slices = [
+            (completed, "#16a34a", "Completed"),
+            (errors, "#dc2626", "Errors"),
+            (manual, "#ca8a04", "Manual"),
+        ]
+        if other:
+            slices.append((other, "#6b7280", "Other"))
+
+        # Build SVG donut using stroke-dasharray
+        r = 50
+        circumference = 2 * 3.14159 * r
+        arcs = ""
+        offset = 0.0
+        for count, color, _label in slices:
+            if count == 0:
+                continue
+            pct = count / total
+            dash = pct * circumference
+            gap = circumference - dash
+            arcs += (
+                f'<circle cx="70" cy="70" r="{r}" fill="none" stroke="{color}" '
+                f'stroke-width="20" stroke-dasharray="{dash:.2f} {gap:.2f}" '
+                f'stroke-dashoffset="{-offset:.2f}" />\n'
+            )
+            offset += dash
+
+        # Legend
+        legend = ""
+        lx = 155
+        ly = 30
+        for count, color, label in slices:
+            if count == 0:
+                continue
+            pct = count / total * 100
+            legend += (
+                f'<rect x="{lx}" y="{ly}" width="12" height="12" rx="2" fill="{color}" />'
+                f'<text x="{lx + 18}" y="{ly + 10}" font-size="12" fill="#1e293b">'
+                f'{label}: {count} ({pct:.0f}%)</text>\n'
+            )
+            ly += 22
+
+        return (
+            '<section><h2>Status Distribution</h2>'
+            f'<svg width="340" height="150" viewBox="0 0 340 150">\n{arcs}'
+            f'<text x="70" y="75" text-anchor="middle" font-size="18" font-weight="700" fill="#1e293b">'
+            f'{total}</text>\n'
+            f'{legend}</svg></section>'
         )
 
 

@@ -21,9 +21,11 @@ Usage::
 from __future__ import annotations
 
 import threading
+import time
 from abc import ABC, abstractmethod
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -32,6 +34,7 @@ from ssis_to_fabric.engine.migration_engine import (
     MigrationEngine,
     MigrationItem,
     MigrationPlan,
+    ProgressCallback,
     TargetArtifact,
 )
 
@@ -350,6 +353,9 @@ class OrchestratorStats:
     manual: int = 0
     skipped: int = 0
     parallel_workers: int = 1
+    total_elapsed_ms: float = 0.0
+    phase1_elapsed_ms: float = 0.0
+    phase2_elapsed_ms: float = 0.0
 
 
 class AgentOrchestrator:
@@ -408,14 +414,31 @@ class AgentOrchestrator:
         *,
         incremental: bool = False,
         state_dir: Path | None = None,
+        progress_callback: ProgressCallback = None,
     ) -> MigrationPlan:
         """Execute the full multi-agent migration pipeline.
 
         Drop-in replacement for ``MigrationEngine.execute`` — same
         signature, same return type, but with parallel artifact generation.
         """
+        from ssis_to_fabric.logging_config import bind_correlation_id, write_audit_entry
+
+        execution_start = time.monotonic()
+
         if plan is None:
             plan = self._engine.create_plan(packages)
+
+        cid = bind_correlation_id()
+        plan.correlation_id = cid
+        _cb = progress_callback
+
+        write_audit_entry("migration_started", detail={
+            "project": plan.project_name,
+            "strategy": plan.strategy,
+            "packages": len(packages),
+            "items": len(plan.items),
+            "workers": self.max_workers,
+        })
 
         output_dir = self.config.output_dir
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -478,12 +501,20 @@ class AgentOrchestrator:
         # ============================
         # Phase 1 — parallel artifacts
         # ============================
-        self._phase1_parallel(plan, pkg_map, output_dir)
+        phase1_start = time.monotonic()
+        self._phase1_parallel(plan, pkg_map, output_dir, _cb)
+        phase1_ms = (time.monotonic() - phase1_start) * 1000
+        if _cb:
+            _cb("phase_completed", {"phase": "phase1_standalone", "elapsed_ms": phase1_ms})
 
         # ============================
         # Phase 2 — parallel pipelines
         # ============================
-        self._phase2_parallel(plan, packages, output_dir)
+        phase2_start = time.monotonic()
+        self._phase2_parallel(plan, packages, output_dir, _cb)
+        phase2_ms = (time.monotonic() - phase2_start) * 1000
+        if _cb:
+            _cb("phase_completed", {"phase": "phase2_pipelines", "elapsed_ms": phase2_ms})
 
         # ============================
         # Phase 3 — connection manifests
@@ -492,8 +523,6 @@ class AgentOrchestrator:
 
         # Persist state
         if incremental or current_hashes:
-            from datetime import datetime, timezone
-
             new_state = dict(prev_state)
             for pkg in packages:
                 if pkg.name in current_hashes:
@@ -505,16 +534,36 @@ class AgentOrchestrator:
             _save_migration_state(_sd, new_state)
 
         # Write report
+        plan.completed_at = datetime.now(tz=timezone.utc).isoformat()
+        plan.total_elapsed_ms = (time.monotonic() - execution_start) * 1000
         self._engine._write_report(plan, output_dir)
 
         stats = self._compute_stats(plan)
+        stats.parallel_workers = self.max_workers
+        stats.total_elapsed_ms = plan.total_elapsed_ms
+        stats.phase1_elapsed_ms = phase1_ms
+        stats.phase2_elapsed_ms = phase2_ms
         logger.info(
             "multi_agent_migration_completed",
             workers=self.max_workers,
             completed=stats.completed,
             errors=stats.errors,
             manual=stats.manual,
+            elapsed_ms=plan.total_elapsed_ms,
         )
+        write_audit_entry("migration_completed", detail={
+            "completed": stats.completed,
+            "errors": stats.errors,
+            "manual": stats.manual,
+            "elapsed_ms": round(plan.total_elapsed_ms, 1),
+            "workers": self.max_workers,
+        })
+        if _cb:
+            _cb("migration_completed", {
+                "elapsed_ms": plan.total_elapsed_ms,
+                "completed": stats.completed,
+                "errors": stats.errors,
+            })
         return plan
 
     # ------------------------------------------------------------------
@@ -526,8 +575,11 @@ class AgentOrchestrator:
         plan: MigrationPlan,
         pkg_map: dict[str, SSISPackage],
         output_dir: Path,
+        progress_callback: ProgressCallback = None,
     ) -> None:
         """Phase 1: Generate standalone artifacts in parallel."""
+
+        _cb = progress_callback
 
         # Partition items by type
         parallel_items: list[MigrationItem] = []
@@ -580,6 +632,7 @@ class AgentOrchestrator:
                 with self._plan_lock:
                     item.status = result.status
                     item.output_path = result.output_path
+                    item.completed_at = datetime.now(tz=timezone.utc).isoformat()
                     if result.error:
                         item.notes.append(f"Generation error: {result.error}")
                         plan.add_error(
@@ -588,14 +641,23 @@ class AgentOrchestrator:
                             message=f"Generation error: {result.error}",
                             suggested_fix="Check the SSIS component structure and generator logs.",
                         )
+                    if _cb:
+                        _cb("item_completed", {
+                            "package": item.source_package,
+                            "task": item.source_task,
+                            "status": item.status,
+                        })
 
     def _phase2_parallel(
         self,
         plan: MigrationPlan,
         packages: list[SSISPackage],
         output_dir: Path,
+        progress_callback: ProgressCallback = None,
     ) -> None:
         """Phase 2: Generate consolidated pipelines per package in parallel."""
+
+        _cb = progress_callback
 
         # Build per-package task routing from the plan
         routings: dict[str, dict[str, TargetArtifact]] = {}
@@ -640,6 +702,7 @@ class AgentOrchestrator:
                             ):
                                 item.output_path = result.output_path
                                 item.status = "completed"
+                                item.completed_at = datetime.now(tz=timezone.utc).isoformat()
                     else:
                         for item in plan.items:
                             if (
@@ -656,6 +719,8 @@ class AgentOrchestrator:
                             message=f"Pipeline generation error: {result.error}",
                             suggested_fix="Review the package structure and Data Factory generator logs.",
                         )
+                    if _cb:
+                        _cb("item_completed", {"package": package.name, "task": "pipeline", "status": result.status})
 
     # ------------------------------------------------------------------
     # Helpers

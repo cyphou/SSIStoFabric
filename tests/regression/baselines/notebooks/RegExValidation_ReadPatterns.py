@@ -10,12 +10,9 @@
 
 
 # --- Imports ---
-from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql import functions as F
-from pyspark.sql.types import *
-from pyspark.sql.window import Window
-from datetime import datetime
 import logging
+
+from pyspark.sql.types import *
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +38,7 @@ def _get_param(name: str, default: str = '') -> str:
     """Read a parameter from the pipeline context, falling back to the default."""
     return _params.get(name, default)
 
-DATAPROFILENAME = _get_param("DataProfileName", "C:\SSIS2016Cookbook\Chapter07\Files\DataProfiling.xml")
+DATAPROFILENAME = _get_param("DataProfileName", r"C:\SSIS2016Cookbook\Chapter07\Files\DataProfiling.xml")
 
 # --- Fabric Connections ---
 # Map SSIS connection managers to Fabric connection IDs.
