@@ -752,7 +752,7 @@ Both use regex pattern matching. Add new patterns as `re.sub` or `re.match` bloc
 
 ## 🗺️ Roadmap
 
-> All 26 phases are complete. See [CHANGELOG.md](CHANGELOG.md) for details.
+> Phases 1–26 are complete. Phases 27–36 are planned — see [CHANGELOG.md](CHANGELOG.md) for details.
 
 | Phase | Name | Version | Focus |
 |-------|------|---------|-------|
@@ -782,6 +782,16 @@ Both use regex pattern matching. Add new patterns as `re.sub` or `re.match` bloc
 | **24** | **Performance** ✅ | 3.4.0 | Migration profiler, Spark optimizer, parallelism advisor, benchmarking |
 | **25** | **Enterprise Connectors** ✅ | 3.5.0 | SAP, Salesforce, Oracle/Teradata/DB2, S3/GCS/BigQuery, REST API migration |
 | **26** | **Intelligent Migration** ✅ | 4.0.0 | AI pattern recognition, LLM transpilation, smart strategy, NL queries |
+| **27** | **Package Decomposition** | 4.1.0 | Monolith splitting, subgraph extraction, reusable notebooks, ExecutePipeline links |
+| **28** | **Validation Framework** | 4.2.0 | Test harness generation, schema drift detection, hash-based record comparison |
+| **29** | **Metadata Catalog** | 4.3.0 | Searchable metadata store, dependency matrix, Purview export |
+| **30** | **Multi-Cloud Targets** | 5.0.0 | Databricks, AWS Glue, GCP Dataflow output generators, target abstraction |
+| **31** | **Auto-Remediation** | 5.1.0 | TODO stub resolution, fallback decomposition, fuzzy connection mapping |
+| **32** | **Migration Analytics** | 5.2.0 | History tracking, trend dashboards, team comparison, Power BI export |
+| **33** | **Disaster Recovery** | 5.3.0 | Cloud-backed checkpoints, resumable migration, artifact backup, DR runbooks |
+| **34** | **Compliance Frameworks** | 5.4.0 | HIPAA/PCI-DSS/ISO 27001 rule sets, evidence packages, SIEM audit trails |
+| **35** | **API-First & SDK** | 5.5.0 | REST API server, Python SDK, webhooks, GraphQL, OpenAPI client generation |
+| **36** | **Legacy Modernization** | 6.0.0 | 20+ modernization patterns, medallion architecture, wave planner |
 
 ---
 

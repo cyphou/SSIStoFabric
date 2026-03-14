@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] — Roadmap
+
+> The following phases are planned. Each will be released as a minor or major version.
+
+### Phase 27 — Package Decomposition & Refactoring *(v4.1.0)*
+- Automatic detection of decomposition candidates (high task count, independent subgraphs)
+- Subgraph extraction: split one monolithic package into multiple Fabric pipelines with `ExecutePipeline` links
+- Shared data flow extraction into reusable notebooks (DRY principle)
+- Dependency-preserving split with topological validation
+- Decomposition preview: side-by-side view of original vs proposed split
+- `ssis2fabric decompose` CLI command with `--min-tasks` threshold
+
+### Phase 28 — Migration Validation & Testing Framework *(v4.2.0)*
+- Generated test harnesses for each pipeline (mock data in → expected data out)
+- Schema drift detection between source SSIS destinations and Fabric lakehouse tables
+- Data sampling and hash-based record comparison (beyond row counts)
+- Execution trace replay: compare SSIS execution logs vs Fabric pipeline run outputs
+- Golden dataset management for regression testing of migrations
+- `ssis2fabric test-gen` CLI command to scaffold pytest suites per migrated package
+
+### Phase 29 — Metadata Catalog & Discovery *(v4.3.0)*
+- Unified metadata store (SQLite/JSON-DB) indexing all packages, tasks, connections, lineage edges
+- Full-text search across package names, table names, expressions, connection strings
+- Tag-based classification (auto + manual) with filterable catalog views
+- Dependency matrix: which packages share tables, connections, or parameters
+- Catalog export to Microsoft Purview / Azure Data Catalog formats
+- `ssis2fabric catalog` CLI command with search and browse sub-commands
+
+### Phase 30 — Multi-Cloud Target Support *(v5.0.0)*
+- Target abstraction layer: `FabricTarget`, `DatabricksTarget`, `GlueTarget`, `DataflowTarget`
+- Generator plugins per target leveraging the Phase 9 plugin architecture
+- Databricks output: generate Databricks notebooks + Workflow JSON definitions
+- AWS Glue output: generate Glue ETL scripts (PySpark) + Glue job definitions
+- GCP Dataflow output: generate Apache Beam pipelines + Dataflow templates
+- `--target fabric|databricks|glue|dataflow` CLI flag on migrate command
+
+### Phase 31 — Automated Remediation & Self-Healing *(v5.1.0)*
+- Auto-remediation engine: resolve common `# TODO` stubs with template-based code generation
+- Fallback expression resolution: decompose `F.expr()` fallbacks into native PySpark calls
+- Connection string auto-mapping: fuzzy-match SSIS connection managers to Fabric connections
+- Incomplete transpilation retry with alternative strategies (regex → AST → template)
+- Remediation confidence scoring with human-in-the-loop review mode
+- `ssis2fabric remediate` CLI command with `--interactive` and `--auto` modes
+
+### Phase 32 — Migration Analytics & Reporting *(v5.2.0)*
+- Migration history database: track all runs with timestamps, scores, durations, error rates
+- Trend dashboard: migration success rate over time, average complexity scores, common failures
+- Team/project comparison views for enterprise-wide migration programs
+- Export analytics: CSV, Excel, and Power BI-ready datasets
+- Migration velocity metrics: packages/day, tasks/hour, trend projections
+- `ssis2fabric analytics` CLI command with `--format html|csv|powerbi`
+
+### Phase 33 — Disaster Recovery & High Availability *(v5.3.0)*
+- Migration checkpoint persistence to Azure Blob Storage / S3 (cloud-backed state)
+- Resumable migration from cloud-stored checkpoints after machine failure
+- Full artifact backup before deployment (pipeline + notebook snapshots)
+- Rollback to any historical checkpoint, not just the latest
+- DR runbook generation: automated disaster recovery documentation
+- `ssis2fabric checkpoint` and `ssis2fabric restore` CLI commands
+
+### Phase 34 — Compliance Frameworks & Audit *(v5.4.0)*
+- Framework-specific rule sets: HIPAA (PHI handling), PCI-DSS (cardholder data), ISO 27001 (ISMS)
+- Evidence package generation: compliance attestation documents per migration
+- Data residency validation: flag cross-region data movement in connection mappings
+- Encryption-at-rest and in-transit verification for migrated pipelines
+- Audit trail export in standard formats (CADF, CEF) for SIEM integration
+- `ssis2fabric compliance-audit --framework hipaa|pci|iso27001` CLI command
+
+### Phase 35 — API-First Architecture & SDK *(v5.5.0)*
+- Full REST API server with CRUD operations, pagination, filtering, and async job tracking
+- Python SDK package (`ssis-to-fabric-sdk`) with typed client classes
+- Webhook-driven automation: trigger migrations from CI/CD pipelines via HTTP
+- GraphQL endpoint for flexible lineage and catalog queries
+- API key authentication and rate limiting for multi-user access
+- OpenAPI client generation for TypeScript/C#/Java consumers
+
+### Phase 36 — Legacy Modernization Patterns *(v6.0.0)*
+- Pattern library: 20+ modernization patterns (batch→streaming, proc→notebook, flat-file→lakehouse)
+- Modernization advisor: score each package for modernization potential vs lift-and-shift
+- Automatic pattern application: opt-in transformations during migration
+- Architecture target templates: medallion (bronze/silver/gold) mapping from SSIS stages
+- Migration wave planner: group packages into modernization waves by dependency and risk
+- `ssis2fabric modernize` CLI command with `--pattern medallion|event-driven|microservice`
+
+---
+
 ## [4.0.0] - 2025-07-24
 
 ### 🧠 Phase 26 — Intelligent Migration
