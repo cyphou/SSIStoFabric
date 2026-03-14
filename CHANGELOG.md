@@ -11,14 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > The following phases are planned. Each will be released as a minor or major version.
 
-### Phase 13 — Testing & Quality *(v2.1.0)*
-- Property-based testing (Hypothesis) for expression transpiler fuzzing
-- Mutation testing (mutmut) integration in CI
-- E2E test harness (Docker Compose with SQL Server + sample SSISDB + automated migration)
-- Generated code validation (PySpark `ast.parse()`, M syntax checker)
-- Performance benchmarks (pytest-benchmark) with regression tracking
-- Visual regression for HTML reports (screenshot comparison)
-
 ### Phase 14 — Integrations & Ecosystem *(v2.2.0)*
 - Azure Key Vault secret resolution for connection credentials
 - Power BI dataset generation from lineage graph
@@ -42,6 +34,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migration cookbook (common SSIS patterns with before/after code comparisons)
 - JSON Schema export for `migration_config.yaml` validation by external tools
 - VS Code extension (inline assessment, syntax highlighting for generated artifacts)
+
+---
+
+## [2.1.0] - 2026-03-14
+
+### 🧪 Phase 13 — Testing & Quality
+
+#### Generated Code Validation
+- `validate_python_syntax()`: validates generated PySpark notebooks via `ast.parse()`
+- `validate_notebook_dir()`: batch-validates all `.py` notebooks in output directory
+- `validate_pipeline_json()`: validates pipeline JSON structure and required keys
+- Heuristic warnings for TODO/FIXME markers and `F.expr()` fallbacks
+- `CodeValidationResult` dataclass: file_path, is_valid, errors, warnings, line_count
+
+#### Expression Transpiler Fuzzing
+- `generate_random_ssis_expression()`: random SSIS expression generator for fuzz testing
+- Builds syntactically plausible expressions: functions, casts, ternaries, nested calls
+- Fuzz-test round-trip: generate → transpile → `ast.parse()` validation
+- 10 seed-based parametrized fuzz tests cover expression transpiler edge cases
+
+#### M Syntax Validation
+- `validate_m_syntax()`: basic Power Query M structural validation
+- Checks balanced brackets, `let...in` structure, known M keywords
+- Severity-based reporting (errors vs warnings)
+
+#### Report Validation
+- `validate_report_json()`: validates migration report JSON for expected keys (`summary`, `packages`)
+- `validate_report_html()`: validates HTML reports for `<html>`, `<title>`, and expected content
+- Integration tests validate actual project output when available
+
+#### Benchmark Helpers
+- `benchmark()` function: measures execution time with iteration support
+- `BenchmarkResult` dataclass with `ops_per_second` calculation
+- `write_benchmark_results()`: serializes benchmark data to JSON
+- `benchmark` pytest marker for performance test identification
+
+#### CI/CD Quality Gate
+- `QualityGate` job added to Azure Pipelines Build stage
+- Mutation testing with `mutmut` (informational, non-blocking)
+- `[quality]` optional dependency group: hypothesis, mutmut, pytest-benchmark
+- `[tool.mutmut]` configuration in pyproject.toml
 
 ---
 

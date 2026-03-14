@@ -94,6 +94,31 @@ stages:
             condition: always()
             displayName: 'Publish code coverage'
 
+      - job: QualityGate
+        displayName: 'Quality Gate (mutation + validation)'
+        dependsOn: Test
+        condition: succeeded()
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.12'
+            displayName: 'Use Python 3.12'
+
+          - script: |
+              pip install -e ".[dev,quality]"
+            displayName: 'Install with quality extras'
+
+          - script: |
+              pytest tests/unit/test_phase13_quality.py -v --tb=short
+            displayName: 'Run quality validation tests'
+
+          - script: |
+              mutmut run --paths-to-mutate src/ssis_to_fabric/testing/quality.py \
+                --runner "python -m pytest tests/unit/test_phase13_quality.py -x -q" \
+                --no-progress || true
+              mutmut results
+            displayName: 'Mutation testing (informational)'
+
   # ===========================
   # Stage 2: Migration Dry Run
   # ===========================

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ssis-to-fabric"
-version = "2.0.0"
+version = "2.1.0"
 description = "Production-ready migration tool: SSIS packages to Microsoft Fabric (Data Factory pipelines & Spark notebooks)"
 readme = "README.md"
 license = {text = "MIT"}
@@ -53,6 +53,11 @@ dev = [
     "mypy>=1.8",
     "pre-commit>=3.6",
 ]
+quality = [
+    "hypothesis>=6.90",
+    "mutmut>=2.5",
+    "pytest-benchmark>=4.0",
+]
 ssisdb = [
     "pyodbc>=5.0",
 ]
@@ -95,4 +100,10 @@ markers = [
     "integration: Integration tests (require connections)",
     "regression: Non-regression tests (compare outputs)",
     "e2e: End-to-end migration tests",
+    "benchmark: Performance benchmark tests",
 ]
+
+[tool.mutmut]
+paths_to_mutate = "src/ssis_to_fabric/engine/spark_generator.py"
+tests_dir = "tests/unit/"
+runner = "python -m pytest tests/unit/ -x -q"
