@@ -24,12 +24,6 @@ classifiers = [
     "Topic :: Software Development :: Code Generators",
 ]
 
-[project.urls]
-Homepage = "https://github.com/cyphou/SSIStoFabric"
-Repository = "https://github.com/cyphou/SSIStoFabric"
-"Bug Tracker" = "https://github.com/cyphou/SSIStoFabric/issues"
-Changelog = "https://github.com/cyphou/SSIStoFabric/blob/main/CHANGELOG.md"
-
 dependencies = [
     "lxml>=4.9",
     "pyyaml>=6.0",
@@ -41,6 +35,12 @@ dependencies = [
     "deepdiff>=6.7",
     "structlog>=23.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/cyphou/SSIStoFabric"
+Repository = "https://github.com/cyphou/SSIStoFabric"
+"Bug Tracker" = "https://github.com/cyphou/SSIStoFabric/issues"
+Changelog = "https://github.com/cyphou/SSIStoFabric/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
