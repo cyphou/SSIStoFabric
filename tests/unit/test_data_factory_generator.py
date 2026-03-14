@@ -590,7 +590,8 @@ class TestDeployerConnectionInjection:
         json_path = tmp_path / "test.json"
         json_path.write_text(json.dumps(pipeline))
 
-        deployer = self._make_deployer("aaaa-bbbb-cccc")
+        _GUID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        deployer = self._make_deployer(_GUID)
         mock_resp = MagicMock(status_code=200)
         deployer._api_call = MagicMock(return_value=mock_resp)
 
@@ -603,7 +604,7 @@ class TestDeployerConnectionInjection:
         assert act["typeProperties"]["scripts"][0]["text"] == "EXEC dbo.sp_MyProc"
         assert act["typeProperties"]["scripts"][0]["type"] == "NonQuery"
         # Connection must be in externalReferences (Fabric-native format)
-        assert act["externalReferences"]["connection"] == "aaaa-bbbb-cccc"
+        assert act["externalReferences"]["connection"] == _GUID
         assert "connection" not in act["typeProperties"]
 
     # ------------------------------------------------------------------
@@ -641,7 +642,8 @@ class TestDeployerConnectionInjection:
         json_path = tmp_path / "test.json"
         json_path.write_text(json.dumps(pipeline))
 
-        deployer = self._make_deployer("aaaa-bbbb-cccc")
+        _GUID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        deployer = self._make_deployer(_GUID)
         mock_resp = MagicMock(status_code=200)
         deployer._api_call = MagicMock(return_value=mock_resp)
 
@@ -652,14 +654,14 @@ class TestDeployerConnectionInjection:
         acts = transformed["properties"]["activities"]
 
         # Scenario a: TODO placeholder → replaced (legacy format migrated)
-        assert acts[0]["externalReferences"]["connection"] == "aaaa-bbbb-cccc"
+        assert acts[0]["externalReferences"]["connection"] == _GUID
         assert "connection" not in acts[0]["typeProperties"]
         # Scenario b: No connection → injected
-        assert acts[1]["externalReferences"]["connection"] == "aaaa-bbbb-cccc"
+        assert acts[1]["externalReferences"]["connection"] == _GUID
         # Scenario c: SP → Script + connection injected
         assert acts[2]["type"] == "Script"
         assert acts[2]["typeProperties"]["scripts"][0]["text"] == "EXEC dbo.sp_Test"
-        assert acts[2]["externalReferences"]["connection"] == "aaaa-bbbb-cccc"
+        assert acts[2]["externalReferences"]["connection"] == _GUID
         assert "connection" not in acts[2]["typeProperties"]
 
     # ------------------------------------------------------------------
@@ -721,9 +723,10 @@ class TestDeployerConnectionInjection:
         json_path = tmp_path / "test.json"
         json_path.write_text(json.dumps(pipeline))
 
+        _GUID = "11111111-2222-3333-4444-555555555555"
         deployer = self._make_deployer(
             connection_id=None,
-            connection_map={"cmgr_DW": "map-conn-1111"},
+            connection_map={"cmgr_DW": _GUID},
         )
         mock_resp = MagicMock(status_code=200)
         deployer._api_call = MagicMock(return_value=mock_resp)
@@ -733,14 +736,21 @@ class TestDeployerConnectionInjection:
 
         transformed = self._decode_payload(deployer._api_call)
         act = transformed["properties"]["activities"][0]
-        assert act["externalReferences"]["connection"] == "map-conn-1111"
+        assert act["externalReferences"]["connection"] == _GUID
 
     # ------------------------------------------------------------------
     # Connection map fallback: any entry when SSIS name not found
     # ------------------------------------------------------------------
     @pytest.mark.unit
-    def test_connection_map_fallback_any(self, tmp_path: Path) -> None:
-        """When SSIS name is missing, the first map entry is used."""
+    def test_connection_map_no_greedy_fallback(self, tmp_path: Path) -> None:
+        """When SSIS name doesn't match any map entry, no greedy fallback occurs.
+
+        Previously the deployer would fall back to the first entry in the
+        connection map (``next(iter(...))``) even when the SSIS name didn't
+        match.  The C1 fix ensures only exact/case-insensitive matches or
+        ``default_connection_id`` are used.  With both unmatched and no
+        default, ``externalReferences`` must be stripped.
+        """
         from unittest.mock import MagicMock
 
         pipeline = self._make_pipeline([
@@ -757,7 +767,7 @@ class TestDeployerConnectionInjection:
 
         deployer = self._make_deployer(
             connection_id=None,
-            connection_map={"some_conn": "fallback-conn-2222"},
+            connection_map={"some_conn": "22222222-3333-4444-5555-666666666666"},
         )
         mock_resp = MagicMock(status_code=200)
         deployer._api_call = MagicMock(return_value=mock_resp)
@@ -767,7 +777,8 @@ class TestDeployerConnectionInjection:
 
         transformed = self._decode_payload(deployer._api_call)
         act = transformed["properties"]["activities"][0]
-        assert act["externalReferences"]["connection"] == "fallback-conn-2222"
+        # No matching connection name and no default → no externalReferences
+        assert "externalReferences" not in act
 
 
 class TestConnectionManifestGeneration:

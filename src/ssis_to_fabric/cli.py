@@ -1691,3 +1691,126 @@ def test_gen(path: str, output: str, golden_dir: str | None) -> None:
 
     console.print(table)
     console.print(f"\n[green]Generated {total_tests} tests for {len(packages)} package(s)[/green]")
+
+
+# ── Phase 29: Metadata Catalog & Discovery ──────────────────────────
+
+
+@main.command(name="catalog")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--query", "-q", default=None, help="Full-text search query.")
+@click.option("--tags", "-t", default=None, help="Comma-separated tags to filter by.")
+@click.option("--export", "export_fmt", type=click.Choice(["json", "purview", "data_catalog"]), default="json",
+              help="Export format.")
+@click.option("--output", "-o", default="output", help="Output directory for catalog.")
+@click.option("--type", "entry_type", type=click.Choice(
+    ["package", "task", "data_flow", "connection", "table", "parameter", "variable", "expression"]),
+    default=None, help="Filter by entry type.")
+def catalog(path: str, query: str | None, tags: str | None, export_fmt: str, output: str,
+            entry_type: str | None) -> None:
+    """Build metadata catalog and search/browse SSIS package metadata."""
+    from ssis_to_fabric.engine.metadata_catalog import (
+        CatalogEntryType,
+        ExportFormat,
+        MetadataCatalog,
+    )
+
+    parser = DTSXParser()
+    p = Path(path)
+    packages = [parser.parse(p)] if p.is_file() else parser.parse_directory(p)
+
+    if not packages:
+        console.print("[red]No SSIS packages found.[/red]")
+        sys.exit(1)
+
+    cat = MetadataCatalog()
+    summary = cat.build(packages)
+
+    # Summary table
+    sum_table = Table(title="Metadata Catalog Summary")
+    sum_table.add_column("Metric", style="cyan")
+    sum_table.add_column("Count", justify="right")
+    sum_table.add_row("Packages", str(summary.total_packages))
+    sum_table.add_row("Tasks", str(summary.total_tasks))
+    sum_table.add_row("Data Flows", str(summary.total_data_flows))
+    sum_table.add_row("Connections", str(summary.total_connections))
+    sum_table.add_row("Tables", str(summary.total_tables))
+    sum_table.add_row("Parameters", str(summary.total_parameters))
+    sum_table.add_row("Variables", str(summary.total_variables))
+    sum_table.add_row("Expressions", str(summary.total_expressions))
+    sum_table.add_row("[bold]Total Entries[/bold]", f"[bold]{summary.total_entries}[/bold]")
+    console.print(sum_table)
+
+    # Tag distribution
+    if summary.tag_counts:
+        tag_table = Table(title="Tag Distribution")
+        tag_table.add_column("Tag", style="yellow")
+        tag_table.add_column("Count", justify="right")
+        for tag, count in sorted(summary.tag_counts.items(), key=lambda x: -x[1]):
+            tag_table.add_row(tag, str(count))
+        console.print(tag_table)
+
+    # Search mode
+    if query:
+        et = CatalogEntryType(entry_type) if entry_type else None
+        result = cat.search(query, entry_type=et)
+        console.print(f"\n[bold]Search results for '[cyan]{query}[/cyan]':[/bold] {result.total_matches} matches "
+                       f"({result.elapsed_ms:.1f}ms)")
+
+        if result.entries:
+            res_table = Table(title=f"Search: {query}")
+            res_table.add_column("Type", style="dim")
+            res_table.add_column("Name", style="cyan")
+            res_table.add_column("Package")
+            res_table.add_column("Tags", style="yellow")
+            for entry in result.entries[:50]:
+                res_table.add_row(
+                    entry.entry_type.value,
+                    entry.name,
+                    entry.package_name,
+                    ", ".join(entry.tags[:5]),
+                )
+            console.print(res_table)
+            if result.total_matches > 50:
+                console.print(f"  [dim]... and {result.total_matches - 50} more[/dim]")
+
+    # Browse mode
+    elif tags:
+        tag_list = [t.strip() for t in tags.split(",")]
+        et = CatalogEntryType(entry_type) if entry_type else None
+        entries = cat.browse(tags=tag_list, entry_type=et)
+        console.print(f"\n[bold]Browse by tags [{', '.join(tag_list)}]:[/bold] {len(entries)} entries")
+
+        if entries:
+            browse_table = Table(title=f"Browse: {', '.join(tag_list)}")
+            browse_table.add_column("Type", style="dim")
+            browse_table.add_column("Name", style="cyan")
+            browse_table.add_column("Package")
+            browse_table.add_column("Tags", style="yellow")
+            for entry in entries[:50]:
+                browse_table.add_row(
+                    entry.entry_type.value,
+                    entry.name,
+                    entry.package_name,
+                    ", ".join(entry.tags[:5]),
+                )
+            console.print(browse_table)
+
+    # Dependency matrix
+    matrix = cat.dependency_matrix()
+    if matrix.edges:
+        dep_table = Table(title="Dependency Matrix (Shared Resources)")
+        dep_table.add_column("Package A", style="cyan")
+        dep_table.add_column("Package B", style="cyan")
+        dep_table.add_column("Shared Resource")
+        dep_table.add_column("Type", style="dim")
+        for edge in matrix.edges[:30]:
+            dep_table.add_row(edge.package_a, edge.package_b, edge.shared_resource, edge.resource_type)
+        console.print(dep_table)
+        if len(matrix.edges) > 30:
+            console.print(f"  [dim]... and {len(matrix.edges) - 30} more edges[/dim]")
+
+    # Export
+    fmt = ExportFormat(export_fmt)
+    report_path = cat.write_catalog(Path(output), fmt=fmt)
+    console.print(f"\n[green]Catalog exported ({export_fmt}): {report_path}[/green]")

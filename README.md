@@ -12,12 +12,12 @@
 
 <p align="center">
   <a href="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml"><img src="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-  <img src="https://img.shields.io/badge/tests-1581%20passed-brightgreen?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-1677%20passed-brightgreen?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"/>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"/>
-  <img src="https://img.shields.io/badge/version-4.2.0-blue?style=flat-square" alt="Version"/>
-  <img src="https://img.shields.io/badge/CLI%20commands-32-orange?style=flat-square" alt="CLI Commands"/>
-  <img src="https://img.shields.io/badge/engine%20modules-31-orange?style=flat-square" alt="Engine Modules"/>
+  <img src="https://img.shields.io/badge/version-4.3.0-blue?style=flat-square" alt="Version"/>
+  <img src="https://img.shields.io/badge/CLI%20commands-33-orange?style=flat-square" alt="CLI Commands"/>
+  <img src="https://img.shields.io/badge/engine%20modules-32-orange?style=flat-square" alt="Engine Modules"/>
 </p>
 
 <p align="center">
@@ -171,7 +171,7 @@ Branch-per-migration, artifact diffing, change tracking, git-sync, `.fabricignor
 </table>
 
 > [!NOTE]
-> **32 CLI commands**, **31 engine modules**, and **1581 tests** — migrating SSIS packages from the included real example projects (MIT licensed).
+> **33 CLI commands**, **32 engine modules**, and **1677+ tests** — migrating SSIS packages from the included real example projects (MIT licensed).
 
 ---
 
@@ -227,7 +227,7 @@ SSISToFabric/
 │   ├── analyzer/                       # SSIS package parsing
 │   │   ├── models.py                  #   Data models (SSISPackage, Variable, Task, etc.)
 │   │   └── dtsx_parser.py            #   .dtsx XML parser + Project.params reader
-│   ├── engine/                         # 29 migration & analysis modules
+│   ├── engine/                         # 32 migration & analysis modules
 │   │   ├── migration_engine.py        #   Orchestration, routing & plan generation
 │   │   ├── data_factory_generator.py  #   ADF pipeline JSON generation
 │   │   ├── dataflow_generator.py      #   Dataflow Gen2 (Power Query M) + expression transpiler
@@ -256,6 +256,7 @@ SSISToFabric/
 │   │   ├── performance.py             #   Migration profiler, Spark optimizer, capacity tuning
 │   │   ├── connectors.py              #   Enterprise connectors (SAP/Oracle/S3/etc.)
 │   │   ├── intelligence.py            #   AI pattern recognition, NL queries, auto tests
+│   │   ├── metadata_catalog.py        #   Metadata catalog, full-text search, Purview export
 │   │   └── utils.py                   #   Shared generator utilities
 │   ├── testing/                        # Test framework
 │   │   └── regression_runner.py       #   Non-regression baseline validation
@@ -263,7 +264,7 @@ SSISToFabric/
 │   ├── api.py                          # Public Python API (SSISMigrator facade)
 │   ├── config.py                       # Configuration management (Pydantic)
 │   └── logging_config.py              # Structured logging (structlog)
-├── tests/                              # 1508 tests (36 unit files + regression)
+├── tests/                              # 1677+ tests (38 unit files + regression)
 ├── examples/                           # 12 scenarios + full SSIS project (28 packages)
 ├── azure-pipelines.yml                 # Azure DevOps CI/CD
 ├── migration_config.yaml               # Default configuration
@@ -652,8 +653,8 @@ ssis2fabric extract-ssisdb "<conn-str>" --folder MyFolder --project MyProject
 ## 🧪 Testing
 
 <p align="center">
-  <img src="https://img.shields.io/badge/tests-1508%20passed-brightgreen?style=for-the-badge" alt="Tests"/>
-  <img src="https://img.shields.io/badge/unit%20tests-36%20files-blue?style=for-the-badge" alt="Unit Tests"/>
+  <img src="https://img.shields.io/badge/tests-1677%20passed-brightgreen?style=for-the-badge" alt="Tests"/>
+  <img src="https://img.shields.io/badge/unit%20tests-38%20files-blue?style=for-the-badge" alt="Unit Tests"/>
   <img src="https://img.shields.io/badge/regression-14-blue?style=for-the-badge" alt="Regression Tests"/>
 </p>
 
@@ -850,7 +851,7 @@ Both use regex pattern matching. Add new patterns as `re.sub` or `re.match` bloc
 | **26** | **Intelligent Migration** ✅ | 4.0.0 | AI pattern recognition, LLM transpilation, smart strategy, NL queries |
 | **27** | **Package Decomposition** ✅ | 4.1.0 | Monolith splitting, subgraph extraction, reusable notebooks, ExecutePipeline links |
 | **28** | **Validation Framework** ✅ | 4.2.0 | Test harness generation, schema drift detection, hash-based record comparison |
-| **29** | **Metadata Catalog** | 4.3.0 | Searchable metadata store, dependency matrix, Purview export |
+| **29** | **Metadata Catalog** ✅ | 4.3.0 | Searchable metadata store, dependency matrix, Purview export |
 | **30** | **Multi-Cloud Targets** | 5.0.0 | Databricks, AWS Glue, GCP Dataflow output generators, target abstraction |
 | **31** | **Auto-Remediation** | 5.1.0 | TODO stub resolution, fallback decomposition, fuzzy connection mapping |
 | **32** | **Migration Analytics** | 5.2.0 | History tracking, trend dashboards, team comparison, Power BI export |

@@ -11,14 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > The following phases are planned. Each will be released as a minor or major version.
 
-### Phase 29 — Metadata Catalog & Discovery *(v4.3.0)*
-- Unified metadata store (SQLite/JSON-DB) indexing all packages, tasks, connections, lineage edges
-- Full-text search across package names, table names, expressions, connection strings
-- Tag-based classification (auto + manual) with filterable catalog views
-- Dependency matrix: which packages share tables, connections, or parameters
-- Catalog export to Microsoft Purview / Azure Data Catalog formats
-- `ssis2fabric catalog` CLI command with search and browse sub-commands
-
 ### Phase 30 — Multi-Cloud Target Support *(v5.0.0)*
 - Target abstraction layer: `FabricTarget`, `DatabricksTarget`, `GlueTarget`, `DataflowTarget`
 - Generator plugins per target leveraging the Phase 9 plugin architecture
@@ -88,6 +80,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Schema extraction from SSIS packages and `.destinations.json` sidecar files
 - Comprehensive validation report (JSON) with summary, drifts, record comparisons, and trace results
 - `ssis2fabric test-gen` CLI command to scaffold pytest suites per migrated package
+
+## [4.3.0] - 2026-03-14
+
+### 🗂️ Phase 29 — Metadata Catalog & Discovery
+- `MetadataCatalog` class: unified metadata store indexing all packages, tasks, connections, tables, parameters, variables, and expressions
+- Full-text search across package names, table names, SQL statements, expressions, and connection strings (AND semantics, case-insensitive)
+- Tag-based classification with 15 auto-tagging rules (STAGING, DIMENSION, FACT, LOOKUP, SCD, CDC, ORCHESTRATOR, ETL, FILE_PROCESSING, INCREMENTAL, etc.)
+- Structural auto-classification: packages tagged based on task types and data flow components (ExecutePackage → ORCHESTRATOR, DataFlow → ETL, SCD component → SCD, etc.)
+- Browse API: filter entries by tag, entry type, and package name with combined filters
+- Dependency matrix: identifies shared tables, connections, and parameters across package pairs
+- JSON catalog export (`metadata_catalog.json`) with summary, entries, and dependency matrix
+- Microsoft Purview export (`purview_catalog.json`): Apache Atlas-compatible entity format with qualifiedName, classifications, and type-specific attributes
+- Azure Data Catalog export (`data_catalog_export.json`): asset-based format for Data Catalog integration
+- SQL table reference extraction from Execute SQL tasks (FROM, JOIN, INTO, UPDATE patterns)
+- Expression indexing from Derived Column and Conditional Split components
+- Recursive task indexing through Sequence Containers, For/ForEach loops
+- `ssis2fabric catalog` CLI command with `--query`, `--tags`, `--type`, and `--export` options
+- `SSISMigrator.catalog()` API method for programmatic access
+- 69 new tests (1677 total)
+
+### 🐛 Bug Fixes (Post-Merge)
+- Rewrote `_ssis_expr_to_pyspark()` with recursive descent parser — fixes nested function calls (e.g., `UPPER(SUBSTRING(Name,1,5))`)
+- Added `started_at`, `completed_at`, `elapsed_ms` timing fields to `MigrationItem`
+- Added `completed_at`, `total_elapsed_ms`, `correlation_id`, `errors` to `MigrationPlan`
+- Added `add_error()` method and `progress_callback` / `incremental` / `state_dir` parameters to `execute()`
+- Added `_generate_logging_config()`, `_generate_web_service_placeholder()`, `_generate_xml_task_placeholder()`, `_generate_wmi_placeholder()` to spark generator
+- Fixed `_generate_header()` to include annotations, transaction option, and description
+- Added DAG-aware data flow detection in `_generate_data_flow_code()`
+- Integrated plugin registry component lookups and expression rules in transpiler
+- Added `connection_inventory` and `auto_migrate_pct` to `AssessmentReport`
+- Fixed `_save_migration_state()` to write directly to `base_dir/state.json`
+- Added lifecycle hooks (`pre_plan`, `post_plan`, `pre_generate`, `post_generate`) in migration engine
+- Fixed 84 merge-related test failures — all 1677 tests now passing
+
+### 📄 Documentation & Tooling
+- Created `.github/copilot-instructions.md` with AI coding agent workflow rules
+- Created `tasks/todo.md` and `tasks/lessons.md` for task tracking and self-improvement loop
+- Updated CONTRIBUTING.md dev plan — Phase 29 completed, Phase 30 as Next Up
+- Updated README.md badges and roadmap (1677 tests, Phase 29 ✅)
 
 ## [4.1.0] - 2026-03-14
 

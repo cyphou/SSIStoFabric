@@ -449,3 +449,37 @@ class SSISMigrator:
             )
 
         return result
+
+    # ------------------------------------------------------------------
+    # 7. Catalog
+    # ------------------------------------------------------------------
+
+    def catalog(
+        self,
+        path: str | Path,
+        *,
+        query: str | None = None,
+        tags: list[str] | None = None,
+    ) -> Any:
+        """Build a metadata catalog from SSIS packages with optional search.
+
+        Parameters
+        ----------
+        path : str or Path
+            SSIS package file or project directory.
+        query : str, optional
+            Full-text search query to filter catalog entries.
+        tags : list[str], optional
+            Tag filter (entries must match ALL tags).
+
+        Returns
+        -------
+        MetadataCatalog
+            Populated catalog with search, browse, and export capabilities.
+        """
+        from ssis_to_fabric.engine.metadata_catalog import MetadataCatalog
+
+        packages = self.analyze(path)
+        cat = MetadataCatalog()
+        cat.build(packages)
+        return cat

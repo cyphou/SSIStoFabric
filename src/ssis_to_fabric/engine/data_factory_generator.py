@@ -228,13 +228,18 @@ class DataFactoryGenerator:
                 src = pc.source_task
                 constraint_graph.setdefault(dest, []).append(src)
 
-        # Build task lookup supporting both ref_id and DTSID keys
+        # Build task lookup supporting both ref_id and DTSID keys.
+        # Also build a name→task map for constraint resolution when
+        # constraints reference tasks by display name (happens with some
+        # SSIS authoring tools).
         id_to_task: dict[str, ControlFlowTask] = {}
+        name_to_task: dict[str, ControlFlowTask] = {}
         for t in tasks:
             if t.ref_id:
                 id_to_task[t.ref_id] = t
             if t.id:
                 id_to_task[t.id] = t
+            name_to_task[t.name] = t
 
         # If we have a constraint graph, use it for dependency resolution
         has_graph = bool(constraint_graph)
@@ -247,23 +252,39 @@ class DataFactoryGenerator:
         resolved_names: dict[str, list[str]] = {}
 
         def _resolve_deps(src_ids: list[str]) -> list[str]:
-            """Resolve source IDs to activity names, following container dissolutions."""
+            """Resolve source IDs to activity names, following container dissolutions.
+
+            Tries ``resolved_names`` first (for dissolved containers), then
+            ``id_to_task`` (ref_id or DTSID), and finally ``name_to_task``
+            (display name).  This ensures constraints are resolved regardless
+            of whether the authoring tool used ref_id, DTSID, or name.
+            """
             names: list[str] = []
             for src_id in src_ids:
                 if src_id in resolved_names:
                     names.extend(resolved_names[src_id])
                 else:
-                    src_task = id_to_task.get(src_id)
+                    src_task = id_to_task.get(src_id) or name_to_task.get(src_id)
                     if src_task:
                         names.append(self._sanitize_name(src_task.name))
+                    else:
+                        # Last resort: the src_id might already be a sanitized
+                        # activity name from a previous flattening pass.
+                        names.append(self._sanitize_name(src_id))
             return names
 
         def _task_constraint_key(task: ControlFlowTask) -> str:
-            """Find which key (ref_id or id) this task appears under in the constraint graph."""
-            if task.ref_id in constraint_graph:
+            """Find which key (ref_id, id, or name) this task appears under in the constraint graph.
+
+            Checks ref_id first (most specific), then DTSID, then display name.
+            This ensures constraints are resolved regardless of authoring tool.
+            """
+            if task.ref_id and task.ref_id in constraint_graph:
                 return task.ref_id
-            if task.id in constraint_graph:
+            if task.id and task.id in constraint_graph:
                 return task.id
+            if task.name in constraint_graph:
+                return task.name
             return ""
 
         for task in tasks:
@@ -293,12 +314,15 @@ class DataFactoryGenerator:
 
                 # Register the dissolved container's leaf activities so
                 # downstream tasks that reference this container resolve correctly.
+                # Register by ref_id, DTSID, *and* display name to handle all
+                # authoring tool variants.
                 if child_activities:
                     leaf_names = [a["name"] for a in child_activities]
                     if task.ref_id:
                         resolved_names[task.ref_id] = leaf_names
                     if task.id:
                         resolved_names[task.id] = leaf_names
+                    resolved_names[task.name] = leaf_names
                     if not has_graph:
                         prev_names = leaf_names
                 continue

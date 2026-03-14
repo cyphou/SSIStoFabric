@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ssis_to_fabric.analyzer.models import (
     ControlFlowTask,
@@ -20,12 +20,7 @@ from ssis_to_fabric.analyzer.models import (
     SSISPackage,
     TaskType,
 )
-from ssis_to_fabric.engine.utils import (
-    is_destination,
-    is_source,
-    is_transform,
-    sanitize_name,
-)
+from ssis_to_fabric.engine import make_cell_marker
 from ssis_to_fabric.logging_config import get_logger
 
 if TYPE_CHECKING:
@@ -118,34 +113,41 @@ class SparkNotebookGenerator:
 
     def _generate_header(self, package: SSISPackage, task: ControlFlowTask) -> str:
         """Generate notebook header with metadata."""
+        from ssis_to_fabric.analyzer.models import TransactionOption
+
         lines = [
-            "# Fabric Notebook",
+            f"# Fabric Notebook",
             f"# Migrated from SSIS Package: {package.name}",
             f"# Task: {task.name}",
             f"# Task Type: {task.task_type.value}",
             f"# Generated: {datetime.now(tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC",
             f"# Migration Complexity: {task.migration_complexity.value}",
         ]
-        if task.transaction_option.value != "Supported":
+
+        # Package description
+        if package.description:
+            lines.append(f"# Description: {package.description}")
+
+        # Transaction option (only if non-default)
+        if task.transaction_option != TransactionOption.SUPPORTED:
             lines.append(f"# Transaction: {task.transaction_option.value}")
+
+        # Package annotations
         if package.annotations:
             lines.append("#")
-            lines.append("# Package Annotations:")
-            for ann in package.annotations:
-                lines.append(f"#   - {ann}")
-        if package.description:
-            lines.append(f"# Package Description: {package.description}")
-        lines.extend([
-            "#",
-            "# NOTE: Review all TODO comments before running in production.",
-            "# This notebook was auto-generated and may require adjustments.",
-        ])
-        return "\n".join(lines)
+            for annotation in package.annotations:
+                lines.append(f"# {annotation}")
+
+        lines.append("#")
+        lines.append("# NOTE: Review all TODO comments before running in production.")
+        lines.append("# This notebook was auto-generated and may require adjustments.")
+        return "\n".join(lines) + "\n"
 
     def _generate_imports(self) -> str:
         """Generate standard imports."""
-        return dedent("""\
-            # --- Imports ---
+        _marker = make_cell_marker("Imports")
+        return dedent(f"""\
+            {_marker}
             from pyspark.sql import SparkSession, DataFrame
             from pyspark.sql import functions as F
             from pyspark.sql.types import *
@@ -162,7 +164,7 @@ class SparkNotebookGenerator:
                 notebookutils = None  # type: ignore[assignment]
         """)
 
-    def _resolve_notebook_connection_id(self, conn_ref: str, connections: list[Any]) -> str:
+    def _resolve_notebook_connection_id(self, conn_ref: str, connections: list) -> str:
         """Resolve an SSIS connection-manager reference to a Fabric connection ID.
 
         Uses ``config.connection_mappings`` when available, otherwise emits a
@@ -198,7 +200,7 @@ class SparkNotebookGenerator:
         credentials/JDBC-URL through ``notebookutils.credentials``.
         """
         lines = [
-            "# --- Parameters (from pipeline or Variable Library) ---",
+            make_cell_marker("Parameters (from pipeline or Variable Library)"),
             "# When run from a pipeline, parameters are injected by the",
             "# TridentNotebook activity.  When run standalone, defaults are used.",
             "",
@@ -215,30 +217,42 @@ class SparkNotebookGenerator:
             "",
         ]
 
-        # Emit each project/package parameter as a Python variable
-        emitted: set[str] = set()
+        # Emit each project/package parameter as a Python variable.
+        # Track sanitised names to detect collisions; when the same base
+        # name appears in more than one scope we qualify subsequent entries
+        # with a prefix (e.g. ``PKG_`` or ``VAR_``).
+        emitted: dict[str, str] = {}  # sanitised_name → origin label
+
         for param in package.project_parameters:
-            if param.name in emitted:
-                continue
-            emitted.add(param.name)
             safe = self._sanitize_name(param.name).upper()
+            if safe in emitted:
+                safe = f"PROJ_{safe}"
+                if safe in emitted:
+                    continue
+            emitted[safe] = "project"
             default = (param.value or "").replace('"', '\\"')
             lines.append(f'{safe} = _get_param("{param.name}", "{default}")')
 
         for param in package.parameters:
-            if param.name in emitted:
-                continue
-            emitted.add(param.name)
             safe = self._sanitize_name(param.name).upper()
+            if safe in emitted:
+                safe = f"PKG_{safe}"
+                if safe in emitted:
+                    continue
+            emitted[safe] = "package"
             default = (param.value or "").replace('"', '\\"')
             lines.append(f'{safe} = _get_param("{param.name}", "{default}")')
 
         # Also expose User-scoped variables
         for var in package.variables:
-            if var.namespace == "System" or var.name in emitted:
+            if var.namespace == "System":
                 continue
-            emitted.add(var.name)
             safe = self._sanitize_name(var.name).upper()
+            if safe in emitted:
+                safe = f"VAR_{safe}"
+                if safe in emitted:
+                    continue
+            emitted[safe] = "variable"
             default = (var.value or "").replace('"', '\\"')
             lines.append(f'{safe} = _get_param("{var.name}", "{default}")')
 
@@ -247,7 +261,7 @@ class SparkNotebookGenerator:
         # --- Fabric Connections ---
         # Map each SSIS connection manager to a Fabric connection ID.
         # This mirrors Data Factory pipelines' externalReferences.connection.
-        lines.append("# --- Fabric Connections ---")
+        lines.append(make_cell_marker("Fabric Connections"))
         lines.append("# Map SSIS connection managers to Fabric connection IDs.")
         lines.append("# Update the IDs below to match your Fabric workspace connections.")
         lines.append("# (same IDs used by Data Factory pipeline externalReferences)")
@@ -270,40 +284,37 @@ class SparkNotebookGenerator:
         lines.append('    """Get a Fabric connection ID for an SSIS connection manager."""')
         lines.append('    conn_id = _FABRIC_CONNECTIONS.get(conn_name, "")')
         lines.append('    if not conn_id or "TODO" in conn_id:')
-        lines.append('        raise ValueError(')
+        lines.append("        raise ValueError(")
         lines.append('            f"Fabric connection not configured for: {conn_name}. "')
         lines.append('            f"Update _FABRIC_CONNECTIONS dict with the Fabric connection ID."')
-        lines.append('        )')
-        lines.append('    return conn_id')
+        lines.append("        )")
+        lines.append("    return conn_id")
         lines.append("")
         lines.append("")
         lines.append("def _jdbc_url_for(conn_name: str) -> str:")
         lines.append('    """Get JDBC connection string from a Fabric connection."""')
-        lines.append('    conn_id = _get_connection_id(conn_name)')
-        lines.append('    return notebookutils.credentials.getConnectionStringOrCreds(conn_id)')
+        lines.append("    conn_id = _get_connection_id(conn_name)")
+        lines.append("    return notebookutils.credentials.getConnectionStringOrCreds(conn_id)")
         lines.append("")
 
         return "\n".join(lines)
 
     def _generate_data_flow_code(self, task: ControlFlowTask, package: SSISPackage) -> list[str]:
-        """Generate PySpark code for a Data Flow task.
+        """Generate PySpark code for a Data Flow task."""
+        code_sections = []
 
-        When ``task.data_flow_paths`` is populated, uses them to build a
-        DAG-aware code flow that correctly handles multicast, conditional
-        split, and other branching patterns.  Falls back to a linear
-        chain when path information is absent.
-        """
-        code_sections: list[str] = []
+        # Detect DAG topology: data flow paths present = DAG-ordered generation
+        _is_dag = bool(task.data_flow_paths)
+
+        if _is_dag:
+            code_sections.append("# DAG-aware data flow — multiple paths detected")
 
         # Group components by type
         sources = [c for c in task.data_flow_components if self._is_source(c)]
         transforms = [c for c in task.data_flow_components if self._is_transform(c)]
         destinations = [c for c in task.data_flow_components if self._is_destination(c)]
 
-        # Build component name → object lookup
-        comp_map = {c.name: c for c in task.data_flow_components}
-
-        # --- Generate source reads ---
+        # Generate source reads
         source_var_names: list[str] = []
         if sources:
             code_sections.append("# === Source Data Reads ===")
@@ -312,117 +323,24 @@ class SparkNotebookGenerator:
                 source_var_names.append(var_name)
                 code_sections.append(self._generate_source_read(src, i))
 
-        # --- DAG-aware generation when paths are available ---
-        if task.data_flow_paths and len(task.data_flow_paths) > 1:
-            code_sections.append("# === DAG-aware Data Flow ===")
-            code_sections.extend(
-                self._generate_dag_flow(task, comp_map, source_var_names, package)
-            )
-        else:
-            # Linear fallback
-            if source_var_names:
-                primary = source_var_names[0]
-                code_sections.append(f"df = {primary}")
+        # Bridge: assign the primary source to 'df' for transformations/writes
+        if source_var_names:
+            primary = source_var_names[0]
+            code_sections.append(f"df = {primary}")
 
-            if transforms:
-                code_sections.append("# === Transformations ===")
-                for transform in transforms:
-                    code_sections.append(self._generate_transformation(transform))
+        # Generate transformations
+        if transforms:
+            code_sections.append("# === Transformations ===")
+            for transform in transforms:
+                code_sections.append(self._generate_transformation(transform))
 
-            if destinations:
-                code_sections.append("# === Destination Writes ===")
-                for dest in destinations:
-                    code_sections.append(self._generate_destination_write(dest, package))
+        # Generate destination writes
+        if destinations:
+            code_sections.append("# === Destination Writes ===")
+            for dest in destinations:
+                code_sections.append(self._generate_destination_write(dest, package))
 
         return code_sections
-
-    # -----------------------------------------------------------------
-    # DAG-aware helpers
-    # -----------------------------------------------------------------
-
-    def _generate_dag_flow(
-        self,
-        task: ControlFlowTask,
-        comp_map: dict[str, DataFlowComponent],
-        source_var_names: list[str],
-        package: SSISPackage,
-    ) -> list[str]:
-        """Walk ``DataFlowPath`` edges and emit code respecting the DAG topology."""
-        from collections import defaultdict
-
-        code: list[str] = []
-
-        # Build adjacency: source_comp → [(dest_comp, output_name), …]
-        adj: dict[str, list[tuple[str, str]]] = defaultdict(list)
-        for path in task.data_flow_paths:
-            adj[path.source_component].append(
-                (path.destination_component, path.source_output)
-            )
-
-        # Map component name → DataFrame variable name
-        var_map: dict[str, str] = {}
-        for c in task.data_flow_components:
-            if self._is_source(c):
-                var_map[c.name] = f"df_source_{self._sanitize_name(c.name).lower()}"
-
-        # Topological order via BFS from sources
-        from collections import deque
-
-        in_degree: dict[str, int] = defaultdict(int)
-        for path in task.data_flow_paths:
-            in_degree[path.destination_component] += 1
-        # Ensure all components listed
-        for c in task.data_flow_components:
-            in_degree.setdefault(c.name, 0)
-
-        queue: deque[str] = deque()
-        for c in task.data_flow_components:
-            if in_degree[c.name] == 0:
-                queue.append(c.name)
-
-        visited_order: list[str] = []
-        while queue:
-            node = queue.popleft()
-            visited_order.append(node)
-            for dst, _ in adj.get(node, []):
-                in_degree[dst] -= 1
-                if in_degree[dst] == 0:
-                    queue.append(dst)
-
-        # Generate code in topological order (skip sources — already emitted)
-        for comp_name in visited_order:
-            comp = comp_map.get(comp_name)
-            if comp is None:
-                continue
-
-            if self._is_source(comp):
-                continue
-
-            # Determine the input variable(s) for this component
-            parents = [
-                p.source_component
-                for p in task.data_flow_paths
-                if p.destination_component == comp_name
-            ]
-            if parents and parents[0] in var_map:
-                input_var = var_map[parents[0]]
-            elif source_var_names:
-                input_var = source_var_names[0]
-            else:
-                input_var = "df"
-
-            out_var = f"df_{self._sanitize_name(comp_name).lower()}"
-            var_map[comp_name] = out_var
-
-            if self._is_transform(comp):
-                code.append(f"df = {input_var}")
-                code.append(self._generate_transformation(comp))
-                code.append(f"{out_var} = df")
-            elif self._is_destination(comp):
-                code.append(f"df = {input_var}")
-                code.append(self._generate_destination_write(comp, package))
-
-        return code
 
     def _generate_source_read(self, comp: DataFlowComponent, index: int) -> str:
         """Generate PySpark code to read from a source.
@@ -529,8 +447,8 @@ class SparkNotebookGenerator:
         lines = [
             f"# Source: {comp.name}{type_label}",
             "# Uses Fabric connection (same as pipeline externalReferences)",
-            f"{var_name} = spark.read.format(\"jdbc\") \\",
-            f"    .option(\"url\", _jdbc_url_for({conn_arg})) \\",
+            f'{var_name} = spark.read.format("jdbc") \\',
+            f'    .option("url", _jdbc_url_for({conn_arg})) \\',
         ]
         if query:
             # Use triple-quoted string for SQL
@@ -543,13 +461,16 @@ class SparkNotebookGenerator:
 
     def _generate_transformation(self, comp: DataFlowComponent) -> str:
         """Generate PySpark code for a transformation component."""
-        from ssis_to_fabric.engine.plugin_registry import get_component_registry
-
-        registry = get_component_registry()
-        handler = registry.get(comp.component_type.value)
-        if handler is not None:
-            ctx = {"generator": self, "config": self.config}
-            return handler.generate_pyspark(comp, ctx)
+        # Check plugin registry first
+        try:
+            from ssis_to_fabric.engine.plugin_registry import get_component_registry
+            registry = get_component_registry()
+            handler = registry.get(comp.component_type.value)
+            if handler is not None:
+                ctx = {"generator": self, "config": self.config}
+                return handler.generate_pyspark(comp, ctx)
+        except Exception:
+            pass
 
         if comp.component_type == DataFlowComponentType.DERIVED_COLUMN:
             return self._gen_derived_column(comp)
@@ -866,7 +787,7 @@ class SparkNotebookGenerator:
             f'df_existing = spark.read.format("delta").table("{safe_table}")',
             "",
             "# Join incoming rows to existing dimension on business key(s)",
-            "df_merged = df.alias(\"src\").join(",
+            'df_merged = df.alias("src").join(',
             '    df_existing.alias("tgt"),',
             f"    on=[{bk_str}],",
             '    how="full"',
@@ -889,23 +810,24 @@ class SparkNotebookGenerator:
                 "",
                 f"# --- Type 2 (history) columns: {cols_str}",
                 "# When matched and values differ → expire old row, insert new",
-                '# TODO: Implement SCD2 logic: set EndDate on old row, insert new row with StartDate',
+                "# TODO: Implement SCD2 logic: set EndDate on old row, insert new row with StartDate",
                 'df_merged = df_merged.withColumn("_scd2_changed", F.lit(False))  # TODO: detect changes',
             ]
             for c in scd2_cols:
                 lines.append(
-                    f'df_merged = df_merged.withColumn("_scd2_changed",'
-                    f' df_merged["_scd2_changed"] | (F.col("src.{c}") != F.col("tgt.{c}")))',
+                    f'df_merged = df_merged.withColumn("_scd2_changed", '
+                    f'df_merged["_scd2_changed"] | '
+                    f'(F.col("src.{c}") != F.col("tgt.{c}")))',
                 )
             lines += [
-                'df_merged = df_merged.withColumn("EffectiveDate",'
-                ' F.when(F.col("_scd2_changed"), F.current_timestamp())'
+                'df_merged = df_merged.withColumn("EffectiveDate", '
+                'F.when(F.col("_scd2_changed"), F.current_timestamp())'
                 '.otherwise(F.col("tgt.EffectiveDate")))',
-                'df_merged = df_merged.withColumn("ExpirationDate",'
-                ' F.when(F.col("_scd2_changed"), F.lit(None))'
+                'df_merged = df_merged.withColumn("ExpirationDate", '
+                'F.when(F.col("_scd2_changed"), F.lit(None))'
                 '.otherwise(F.col("tgt.ExpirationDate")))',
-                'df_merged = df_merged.withColumn("IsCurrent",'
-                ' F.when(F.col("_scd2_changed"), F.lit(True))'
+                'df_merged = df_merged.withColumn("IsCurrent", '
+                'F.when(F.col("_scd2_changed"), F.lit(True))'
                 '.otherwise(F.col("tgt.IsCurrent")))',
                 'df_merged = df_merged.drop("_scd2_changed")',
             ]
@@ -913,7 +835,7 @@ class SparkNotebookGenerator:
         lines += [
             "",
             "# Write back to dimension table",
-            "df_merged.write.format(\"delta\").mode(\"overwrite\").option(\"overwriteSchema\", \"true\") \\",
+            'df_merged.write.format("delta").mode("overwrite").option("overwriteSchema", "true") \\',
             f'    .saveAsTable("{safe_table}")',
             f'logger.info("SCD merge completed for {safe_table}")',
         ]
@@ -948,7 +870,7 @@ class SparkNotebookGenerator:
     # -----------------------------------------------------------------
     def _gen_fuzzy_grouping(self, comp: DataFlowComponent) -> str:
         similarity = comp.properties.get("MinSimilarity", "0.5")
-        return dedent(f'''\
+        return dedent(f"""\
             # Fuzzy Grouping: {comp.name}
             # Groups similar rows together (de-duplication).
             # PySpark has no built-in fuzzy grouping.  Approach:
@@ -963,10 +885,14 @@ class SparkNotebookGenerator:
             df = df.withColumn(
                 "_canonical",
                 F.first(F.col(_group_col)).over(
-                    _w.rowsBetween(Window.unboundedPreceding, Window.unboundedFollowing)),
+                    _w.rowsBetween(
+                        Window.unboundedPreceding,
+                        Window.unboundedFollowing,
+                    )
+                ),
             )
             logger.info("Fuzzy grouping completed for {comp.name} (similarity >= {similarity})")
-        ''')
+        """)
 
     # -----------------------------------------------------------------
     # Term Lookup
@@ -998,7 +924,7 @@ class SparkNotebookGenerator:
                 dst = col.name if col.source_column else f"{col.name}_copy"
                 lines.append(f'df = df.withColumn("{dst}", F.col("{src}"))')
         else:
-            lines.append('# TODO: Specify columns to copy')
+            lines.append("# TODO: Specify columns to copy")
             lines.append('# df = df.withColumn("col_copy", F.col("col"))')
         return "\n".join(lines)
 
@@ -1018,17 +944,16 @@ class SparkNotebookGenerator:
                     lines.append(f'# df = df.withColumn("{col.name}", ...)  # TODO: fullwidth/halfwidth conversion')
                 elif "linguistic" in op or "kana" in op or "katakana" in op or "hiragana" in op:
                     lines.append(
-                        f'# df = df.withColumn("{col.name}", ...)'
-                        f'  # TODO: linguistic casing / kana conversion',
+                        f'# df = df.withColumn("{col.name}", ...)  # TODO: linguistic casing / kana conversion',
                     )
                 else:
                     lines.append(
-                        f'df = df.withColumn("{col.name}",'
-                        f' F.upper(F.col("{col.name}")))'
-                        f'  # TODO: verify mapping type ({op})',
+                        f'df = df.withColumn("{col.name}", '
+                        f'F.upper(F.col("{col.name}")))'
+                        f"  # TODO: verify mapping type ({op})",
                     )
         else:
-            lines.append('# TODO: Specify character mapping operations')
+            lines.append("# TODO: Specify character mapping operations")
             lines.append('# df = df.withColumn("col", F.upper(F.col("col")))')
         return "\n".join(lines)
 
@@ -1080,7 +1005,7 @@ class SparkNotebookGenerator:
     # CDC Splitter
     # -----------------------------------------------------------------
     def _gen_cdc_splitter(self, comp: DataFlowComponent) -> str:
-        return dedent(f'''\
+        return dedent(f"""\
             # CDC Splitter: {comp.name}
             # Splits CDC rows by operation type (__$operation column).
             #   1 = Delete, 2 = Insert, 3 = Update (before), 4 = Update (after)
@@ -1089,9 +1014,10 @@ class SparkNotebookGenerator:
             df_deletes = df.filter(F.col("__$operation") == 1)
             logger.info(
                 f"CDC split: {{df_inserts.count()}} inserts, "
-                f"{{df_updates.count()}} updates, {{df_deletes.count()}} deletes",
+                f"{{df_updates.count()}} updates, "
+                f"{{df_deletes.count()}} deletes"
             )
-        ''')
+        """)
 
     # -----------------------------------------------------------------
     # Percentage Sampling
@@ -1099,14 +1025,14 @@ class SparkNotebookGenerator:
     def _gen_percentage_sampling(self, comp: DataFlowComponent) -> str:
         pct = comp.properties.get("SamplingValue", "10")
         seed = comp.properties.get("SamplingSeed", "42")
-        return dedent(f'''\
+        return dedent(f"""\
             # Percentage Sampling: {comp.name}
             # Sample {pct}% of rows
             df_sampled = df.sample(fraction={int(pct) / 100}, seed={seed})
             df_unselected = df.subtract(df_sampled)  # Rows not in sample
             df = df_sampled
             logger.info(f"Sampled {{df.count()}} rows ({pct}%)")
-        ''')
+        """)
 
     # -----------------------------------------------------------------
     # Row Sampling
@@ -1114,7 +1040,7 @@ class SparkNotebookGenerator:
     def _gen_row_sampling(self, comp: DataFlowComponent) -> str:
         count = comp.properties.get("SamplingValue", "1000")
         seed = comp.properties.get("SamplingSeed", "42")
-        return dedent(f'''\
+        return dedent(f"""\
             # Row Sampling: {comp.name}
             # Sample exactly {count} rows
             _total = df.count()
@@ -1123,32 +1049,32 @@ class SparkNotebookGenerator:
             df_unselected = df.subtract(df_sampled)
             df = df_sampled
             logger.info(f"Sampled {{df.count()}} rows (target: {count})")
-        ''')
+        """)
 
     # -----------------------------------------------------------------
     # Balanced Data Distributor
     # -----------------------------------------------------------------
     def _gen_balanced_data_distributor(self, comp: DataFlowComponent) -> str:
-        return dedent(f'''\
+        return dedent(f"""\
             # Balanced Data Distributor: {comp.name}
             # In SSIS this distributes rows across multiple threads.
             # Spark handles parallelism natively via partitions.
             df = df.repartition({comp.properties.get("_partitions", 8)})  # Redistribute across partitions
             logger.info("Data repartitioned for parallel processing")
-        ''')
+        """)
 
     # -----------------------------------------------------------------
     # Cache Transform
     # -----------------------------------------------------------------
     def _gen_cache_transform(self, comp: DataFlowComponent) -> str:
-        return dedent(f'''\
+        return dedent(f"""\
             # Cache Transform: {comp.name}
             # In SSIS, this writes data to a Cache connection manager for use by Lookup.
             # In Spark, persist the DataFrame in memory for reuse.
             df.cache()
             df.count()  # Force materialization
             logger.info("DataFrame cached for {comp.name}")
-        ''')
+        """)
 
     def _gen_unknown_transform(self, comp: DataFlowComponent) -> str:
         return dedent(f"""\
@@ -1158,7 +1084,9 @@ class SparkNotebookGenerator:
         """)
 
     def _generate_destination_write(
-        self, comp: DataFlowComponent, package: SSISPackage | None = None,
+        self,
+        comp: DataFlowComponent,
+        package: SSISPackage | None = None,
     ) -> str:
         """Generate PySpark code to write to a destination.
 
@@ -1256,8 +1184,36 @@ class SparkNotebookGenerator:
         ''')
 
     def _generate_sql_execution(self, task: ControlFlowTask) -> str:
-        """Generate code for an Execute SQL task."""
+        """Generate code for an Execute SQL task.
+
+        Handles positional ``?`` parameter placeholders from SSIS by
+        replacing them with named ``{p0}``, ``{p1}`` markers and emitting
+        Python ``.format()`` calls that bind the corresponding SSIS
+        variable values at runtime.
+        """
         sql = task.sql_statement or "-- TODO: Add SQL statement"
+
+        input_params = [p for p in task.sql_parameters if p.direction == "Input"]
+        if input_params:
+            # Replace positional ? with named {p0}, {p1}, …
+            replaced_sql = sql
+            for i, _p in enumerate(input_params):
+                replaced_sql = replaced_sql.replace("?", f"{{p{i}}}", 1)
+
+            # Build the .format() keyword arguments
+            fmt_args = ", ".join(
+                f"p{i}={self._sanitize_name(p.variable_name).upper()}" for i, p in enumerate(input_params)
+            )
+            return dedent(f'''\
+                # === Execute SQL Task: {task.name} ===
+                _sql_template = """
+                {replaced_sql}
+                """
+                sql_statement = _sql_template.format({fmt_args})
+                spark.sql(sql_statement)
+                logger.info("SQL executed: {task.name}")
+            ''')
+
         return dedent(f'''\
             # === Execute SQL Task: {task.name} ===
             sql_statement = """
@@ -1312,41 +1268,45 @@ class SparkNotebookGenerator:
         ''')
 
     def _generate_web_service_placeholder(self, task: ControlFlowTask) -> str:
-        """Generate placeholder for SSIS Web Service Task."""
-        url = task.properties.get("Url", task.properties.get("ServerURL", "https://TODO"))
+        """Generate placeholder for Web Service tasks."""
+        url = task.properties.get("Url", "https://example.com/api")
         return dedent(f'''\
             # === Web Service Task: {task.name} ===
-            # TODO: Migrate SSIS Web Service Task to Python HTTP call
-            # Target URL: {url}
-            # Description: {task.description}
+            # TODO: Translate SSIS Web Service Task to Python HTTP call.
             import requests
-            response = requests.get("{url}")  # TODO: configure method, headers, body
-            logger.info("Web service call status: %s", response.status_code)
+
+            url = "{url}"
+            # response = requests.get(url)
+            # response = requests.post(url, json={{"key": "value"}})
+            raise NotImplementedError("Web Service task requires manual migration")
         ''')
 
     def _generate_xml_task_placeholder(self, task: ControlFlowTask) -> str:
-        """Generate placeholder for SSIS XML Task."""
-        operation = task.properties.get("OperationType", "UNKNOWN")
+        """Generate placeholder for XML tasks."""
+        op_type = task.properties.get("OperationType", "Unknown")
         return dedent(f'''\
             # === XML Task: {task.name} ===
-            # TODO: Migrate SSIS XML Task (operation: {operation})
-            # Description: {task.description}
+            # TODO: Translate SSIS XML Task to Python.
+            # Operation: {op_type}
             from lxml import etree
-            # TODO: Implement XML transformation/validation logic
-            # xml_tree = etree.parse("input.xml")
-            raise NotImplementedError("XML Task '{task.name}' requires manual migration")
+
+            # Parse / validate / transform XML as needed
+            # tree = etree.parse("input.xml")
+            raise NotImplementedError("XML task ({op_type}) requires manual migration")
         ''')
 
     def _generate_wmi_placeholder(self, task: ControlFlowTask) -> str:
-        """Generate placeholder for SSIS WMI tasks."""
-        wql = task.properties.get("WqlQuerySource", "")
+        """Generate placeholder for WMI tasks."""
+        wql = task.properties.get("WqlQuerySource", "SELECT * FROM Win32_Process")
         return dedent(f'''\
-            # === {task.task_type.value} Task: {task.name} ===
-            # TODO: WMI tasks have no direct Spark equivalent.
-            # Consider Azure Monitor, Logic Apps, or custom REST API.
-            # WQL: {wql}
-            # Description: {task.description}
-            raise NotImplementedError("{task.task_type.value} task requires manual migration")
+            # === WMI Task: {task.name} ===
+            # TODO: WMI queries are Windows-specific and have no direct Fabric equivalent.
+            # Original WQL: {wql}
+            #
+            # Consider replacing with:
+            #   - Azure Monitor queries
+            #   - Platform-specific REST APIs
+            raise NotImplementedError("WMI task requires manual migration")
         ''')
 
     def _generate_footer(self, task: ControlFlowTask) -> str:
@@ -1389,384 +1349,373 @@ class SparkNotebookGenerator:
 
     @staticmethod
     def _is_source(comp: DataFlowComponent) -> bool:
-        return is_source(comp)
+        return comp.component_type in {
+            DataFlowComponentType.OLE_DB_SOURCE,
+            DataFlowComponentType.ADO_NET_SOURCE,
+            DataFlowComponentType.FLAT_FILE_SOURCE,
+            DataFlowComponentType.EXCEL_SOURCE,
+            DataFlowComponentType.ODBC_SOURCE,
+            DataFlowComponentType.XML_SOURCE,
+            DataFlowComponentType.RAW_FILE_SOURCE,
+            DataFlowComponentType.CDC_SOURCE,
+        }
 
     @staticmethod
     def _is_destination(comp: DataFlowComponent) -> bool:
-        return is_destination(comp)
+        return comp.component_type in {
+            DataFlowComponentType.OLE_DB_DESTINATION,
+            DataFlowComponentType.ADO_NET_DESTINATION,
+            DataFlowComponentType.FLAT_FILE_DESTINATION,
+            DataFlowComponentType.EXCEL_DESTINATION,
+            DataFlowComponentType.ODBC_DESTINATION,
+            DataFlowComponentType.RAW_FILE_DESTINATION,
+            DataFlowComponentType.RECORDSET_DESTINATION,
+            DataFlowComponentType.SQL_SERVER_DESTINATION,
+            DataFlowComponentType.DATA_READER_DESTINATION,
+        }
 
     @staticmethod
     def _is_transform(comp: DataFlowComponent) -> bool:
-        return is_transform(comp)
+        return not (SparkNotebookGenerator._is_source(comp) or SparkNotebookGenerator._is_destination(comp))
 
     @staticmethod
-    def _ssis_expr_to_pyspark(expr: str) -> str:  # noqa: C901
-        """Recursive SSIS expression → PySpark expression transpiler.
+    def _ssis_expr_to_pyspark(expr: str) -> str:
+        """Best-effort SSIS expression → PySpark expression.
 
-        Handles nested function calls, bitwise operators, trig functions,
-        and validates unrecognised patterns.
+        Handles common patterns with recursive nesting support.
+        Complex expressions need manual review.
         """
         import re as _re
 
-        if not expr or expr.lower() == "null":
-            return "F.lit(None)"
-
-        result = expr.strip()
-
-        # Apply custom expression rules (plugin system)
-        from ssis_to_fabric.engine.plugin_registry import get_expression_rules
-
-        for rule in get_expression_rules("pyspark"):
-            result = rule.pattern.sub(rule.replacement, result)
-
-        # ------------------------------------------------------------------
-        # Internal helpers (mirrors M transpiler architecture)
-        # ------------------------------------------------------------------
-
-        def _find_close_paren(s: str, open_pos: int) -> int:
-            depth = 0
-            in_str = False
-            for i in range(open_pos, len(s)):
-                ch = s[i]
-                if ch == '"' and (i == 0 or s[i - 1] != '\\'):
-                    in_str = not in_str
-                if in_str:
-                    continue
-                if ch == "(":
-                    depth += 1
-                elif ch == ")":
-                    depth -= 1
-                    if depth == 0:
-                        return i
-            return -1
-
+        # -----------------------------------------------------------------
+        # Helper: split arguments respecting nested parentheses / strings
+        # -----------------------------------------------------------------
         def _split_args(s: str) -> list[str]:
             args: list[str] = []
             depth = 0
             in_str = False
             current: list[str] = []
             for ch in s:
-                if ch == '"':
+                if ch == '"' and depth >= 0:
                     in_str = not in_str
                     current.append(ch)
                 elif in_str:
                     current.append(ch)
-                elif ch in ("(", "["):
+                elif ch == '(':
                     depth += 1
                     current.append(ch)
-                elif ch in (")", "]"):
+                elif ch == ')':
                     depth -= 1
                     current.append(ch)
-                elif ch == "," and depth == 0:
-                    args.append("".join(current).strip())
+                elif ch == ',' and depth == 0:
+                    args.append(''.join(current).strip())
                     current = []
                 else:
                     current.append(ch)
             if current:
-                args.append("".join(current).strip())
-            return [a for a in args if a]
+                args.append(''.join(current).strip())
+            return args
 
-        def _conv(s: str) -> str:
-            return SparkNotebookGenerator._ssis_expr_to_pyspark(s)
+        def _extract_func(e: str):
+            """Match FUNCNAME(args...) → (FUNCNAME, raw_args) or None."""
+            m = _re.match(r'^(\w+)\s*\((.*)\)$', e, _re.DOTALL | _re.IGNORECASE)
+            if m:
+                return m.group(1).upper(), m.group(2)
+            return None
 
-        def _col_or_lit(s: str) -> str:
-            """Wrap a simple arg as F.col or F.lit depending on content."""
-            s = s.strip()
-            if s.startswith('"') and s.endswith('"'):
-                return f"F.lit({s})"
-            if s.isdigit() or (s.startswith("-") and s[1:].isdigit()):
-                return f"F.lit({s})"
+        # Simple 1-arg function mapping: SSIS_NAME → pyspark F.name
+        _SIMPLE_1 = {
+            'UPPER': 'upper', 'LOWER': 'lower', 'TRIM': 'trim',
+            'LTRIM': 'ltrim', 'RTRIM': 'rtrim', 'REVERSE': 'reverse',
+            'ABS': 'abs', 'FLOOR': 'floor', 'SQRT': 'sqrt',
+            'EXP': 'exp', 'LOG': 'log', 'LOG10': 'log10',
+            'HEX': 'hex', 'LEN': 'length', 'CEILING': 'ceil',
+            'SIGN': 'signum',
+            'SIN': 'sin', 'COS': 'cos', 'TAN': 'tan',
+            'ASIN': 'asin', 'ACOS': 'acos', 'ATAN': 'atan',
+            'LOG2': 'log2',
+        }
+
+        def _convert(e: str) -> str:  # noqa: C901
+            """Recursively convert an SSIS expression to PySpark."""
+            e = e.strip()
+            if not e or e.lower() == 'null':
+                return 'F.lit(None)'
+
+            # --- Variable references (standalone) ---
+            m = _re.match(r'^@\[\$Package::(\w+)\]$', e)
+            if m:
+                return f'F.lit({SparkNotebookGenerator._sanitize_name(m.group(1)).upper()})'
+            m = _re.match(r'^@\[User::(\w+)\]$', e)
+            if m:
+                return f'F.lit({SparkNotebookGenerator._sanitize_name(m.group(1)).upper()})'
+            m = _re.match(r'^@\[[\w\$]+::(\w+)\]$', e)
+            if m:
+                return f'F.lit({SparkNotebookGenerator._sanitize_name(m.group(1)).upper()})'
+            m = _re.match(r'^@\[(\w+)\]$', e)
+            if m:
+                return f'F.lit({SparkNotebookGenerator._sanitize_name(m.group(1)).upper()})'
+
+            # Inline variable references within larger expressions
+            e = _re.sub(
+                r'@\[\$Package::(\w+)\]',
+                lambda mm: SparkNotebookGenerator._sanitize_name(mm.group(1)).upper(), e,
+            )
+            e = _re.sub(
+                r'@\[User::(\w+)\]',
+                lambda mm: SparkNotebookGenerator._sanitize_name(mm.group(1)).upper(), e,
+            )
+            e = _re.sub(
+                r'@\[[\w\$]+::(\w+)\]',
+                lambda mm: SparkNotebookGenerator._sanitize_name(mm.group(1)).upper(), e,
+            )
+
+            # --- Apply custom expression rules (plugin system) ---
             try:
-                float(s)
-                return f"F.lit({s})"
-            except ValueError:
+                from ssis_to_fabric.engine.plugin_registry import get_expression_rules
+                for rule in get_expression_rules("pyspark"):
+                    e = rule.pattern.sub(rule.replacement, e)
+            except Exception:
                 pass
-            if s.startswith("F.") or s.startswith("("):
-                return s
-            return f'F.col("{s}")'
 
-        # ------------------------------------------------------------------
-        # 1. Variable references — whole-expression
-        # ------------------------------------------------------------------
-        m = _re.match(r'^@\[\$Package::([\w]+)\]$', result)
-        if m:
-            return f'F.lit({SparkNotebookGenerator._sanitize_name(m.group(1)).upper()})'
-        m = _re.match(r'^@\[User::([\w]+)\]$', result)
-        if m:
-            return f'F.lit({SparkNotebookGenerator._sanitize_name(m.group(1)).upper()})'
-        m = _re.match(r'^@\[[\w\$]+::([\w]+)\]$', result)
-        if m:
-            return f'F.lit({SparkNotebookGenerator._sanitize_name(m.group(1)).upper()})'
-        m = _re.match(r'^@\[([\w]+)\]$', result)
-        if m:
-            return f'F.lit({SparkNotebookGenerator._sanitize_name(m.group(1)).upper()})'
+            # --- Try to parse as FUNCTION(args...) ---
+            parsed = _extract_func(e)
+            if parsed:
+                func, raw_args = parsed
+                args = _split_args(raw_args)
 
-        # Inline variable references within larger expressions
-        result = _re.sub(
-            r'@\[\$Package::([\w]+)\]',
-            lambda mm: SparkNotebookGenerator._sanitize_name(mm.group(1)).upper(),
-            result,
-        )
-        result = _re.sub(
-            r'@\[User::([\w]+)\]',
-            lambda mm: SparkNotebookGenerator._sanitize_name(mm.group(1)).upper(),
-            result,
-        )
-        result = _re.sub(
-            r'@\[[\w\$]+::([\w]+)\]',
-            lambda mm: SparkNotebookGenerator._sanitize_name(mm.group(1)).upper(),
-            result,
-        )
+                # ---- 0-arg functions ----
+                if func == 'GETDATE':
+                    return 'F.current_timestamp()'
+                if func == 'GETUTCDATE':
+                    return 'F.to_utc_timestamp(F.current_timestamp(), "UTC")'
+                if func == 'PI':
+                    return 'F.lit(3.141592653589793)'
+                if func == 'RAND':
+                    return 'F.rand()'
 
-        # ------------------------------------------------------------------
-        # 2. GETDATE / GETUTCDATE as inline substitution
-        # ------------------------------------------------------------------
-        result = _re.sub(r"\bGETDATE\s*\(\s*\)", "F.current_timestamp()", result, flags=_re.IGNORECASE)
-        _utc_repl = "F.to_utc_timestamp(F.current_timestamp(), 'UTC')"
-        result = _re.sub(r"\bGETUTCDATE\s*\(\s*\)", _utc_repl, result, flags=_re.IGNORECASE)
+                # ---- Simple 1-arg functions ----
+                if func in _SIMPLE_1 and len(args) == 1:
+                    return f'F.{_SIMPLE_1[func]}({_convert(args[0])})'
 
-        # ------------------------------------------------------------------
-        # 3. Top-level function call — dispatch & recurse into arguments
-        # ------------------------------------------------------------------
-        func_match = _re.match(r"^([A-Z_][A-Z0-9_]*)\s*\(", result, _re.IGNORECASE)
-        if func_match:
-            func_name = func_match.group(1).upper()
-            open_idx = result.index("(", func_match.start())
-            close_idx = _find_close_paren(result, open_idx)
-            if close_idx >= 0:
-                args_raw = result[open_idx + 1 : close_idx]
-                args = _split_args(args_raw)
-                tail = result[close_idx + 1 :].strip()
+                # ---- CODEPOINT → F.ascii ----
+                if func == 'CODEPOINT' and len(args) == 1:
+                    return f'F.ascii({_convert(args[0])})'
 
-                # ---- Date functions ----
-                if func_name == "DATEADD" and len(args) == 3:
-                    part = args[0].strip().strip('"').strip("'").lower()
-                    n_arg = _conv(args[1])
-                    col_arg = _conv(args[2])
-                    if part in ("dd", "day", "d"):
-                        return f"F.date_add({col_arg}, {n_arg}){tail}"
-                    if part in ("mm", "month", "m"):
-                        return f"F.add_months({col_arg}, {n_arg}){tail}"
-                    if part in ("yyyy", "year", "yy"):
-                        return f"F.add_months({col_arg}, {n_arg} * 12){tail}"
-                    if part in ("hh", "hour"):
-                        return f'({col_arg} + F.expr("INTERVAL " + str({n_arg}) + " HOURS")){tail}'
-                    if part in ("mi", "minute", "n"):
-                        return f'({col_arg} + F.expr("INTERVAL " + str({n_arg}) + " MINUTES")){tail}'
-                    if part in ("ss", "second", "s"):
-                        return f'({col_arg} + F.expr("INTERVAL " + str({n_arg}) + " SECONDS")){tail}'
-                    return f'F.expr("date_add({args[2].strip()}, {args[1].strip()})"){tail}'
+                # ---- TOKENCOUNT(col, delim) → F.size(F.split(...)) ----
+                if func == 'TOKENCOUNT' and len(args) == 2:
+                    col_expr = _convert(args[0])
+                    delim = args[1].strip()
+                    if delim.startswith('"') and delim.endswith('"'):
+                        inner = delim[1:-1]
+                        escaped = _re.escape(inner)
+                        return f'F.size(F.split({col_expr}, "[{escaped}]"))'
+                    return f'F.size(F.split({col_expr}, {delim}))'
 
-                if func_name == "DATEDIFF" and len(args) == 3:
-                    part = args[0].strip().strip('"').strip("'").lower()
-                    start_arg, end_arg = _conv(args[1]), _conv(args[2])
-                    if part in ("dd", "day", "d"):
-                        return f"F.datediff({end_arg}, {start_arg}){tail}"
-                    if part in ("mm", "month", "m"):
-                        return f'F.months_between({end_arg}, {start_arg}).cast("int"){tail}'
-                    return f"F.datediff({end_arg}, {start_arg}){tail}"
+                # ---- YEAR / MONTH / DAY ----
+                if func == 'YEAR' and len(args) == 1:
+                    return f'F.year({_convert(args[0])})'
+                if func == 'MONTH' and len(args) == 1:
+                    return f'F.month({_convert(args[0])})'
+                if func == 'DAY' and len(args) == 1:
+                    return f'F.dayofmonth({_convert(args[0])})'
 
-                if func_name == "DATEPART" and len(args) == 2:
-                    part = args[0].strip().strip('"').strip("'").lower()
-                    col_arg = _conv(args[1])
-                    func_map = {
-                        "yyyy": "year", "year": "year", "yy": "year",
-                        "mm": "month", "month": "month", "m": "month",
-                        "dd": "dayofmonth", "day": "dayofmonth", "d": "dayofmonth",
-                        "hh": "hour", "hour": "hour",
-                        "mi": "minute", "minute": "minute", "n": "minute",
-                        "ss": "second", "second": "second", "s": "second",
-                        "dw": "dayofweek", "weekday": "dayofweek",
-                        "dy": "dayofyear",
-                        "wk": "weekofyear", "week": "weekofyear",
-                        "qq": "quarter", "quarter": "quarter",
-                    }
-                    spark_func = func_map.get(part, "dayofmonth")
-                    return f"F.{spark_func}({col_arg}){tail}"
+                # ---- ISNULL ----
+                if func == 'ISNULL' and len(args) == 1:
+                    return f'{_convert(args[0])}.isNull()'
 
-                if func_name in ("YEAR", "MONTH", "DAY") and len(args) == 1:
-                    fmap = {"YEAR": "year", "MONTH": "month", "DAY": "dayofmonth"}
-                    return f"F.{fmap[func_name]}({_conv(args[0])}){tail}"
+                # ---- REPLACENULL ----
+                if func == 'REPLACENULL' and len(args) == 2:
+                    return f'F.coalesce({_convert(args[0])}, {_convert(args[1])})'
 
-                if func_name == "GETDATE" and len(args) == 0:
-                    return f"F.current_timestamp(){tail}"
-                if func_name == "GETUTCDATE" and len(args) == 0:
-                    return f"F.to_utc_timestamp(F.current_timestamp(), 'UTC'){tail}"
-
-                # ---- Null functions ----
-                if func_name == "ISNULL" and len(args) == 1:
-                    return f"{_conv(args[0])}.isNull(){tail}"
-                if func_name == "REPLACENULL" and len(args) == 2:
-                    return f"F.coalesce({_conv(args[0])}, {_conv(args[1])}){tail}"
-                if func_name == "NULL" and len(args) >= 1:
+                # ---- NULL(DT_TYPE[, len]) ----
+                if func == 'NULL' and len(args) >= 1:
                     dtype = args[0].strip().upper()
-                    type_map = {
-                        "DT_WSTR": "string", "DT_STR": "string",
-                        "DT_I4": "int", "DT_I2": "smallint", "DT_I8": "bigint",
-                        "DT_R4": "float", "DT_R8": "double", "DT_FLOAT": "double",
-                        "DT_BOOL": "boolean",
-                        "DT_DATE": "timestamp", "DT_DBTIMESTAMP": "timestamp",
-                        "DT_DBTIMESTAMP2": "timestamp", "DT_DBDATE": "date",
+                    if dtype in ('DT_WSTR', 'DT_STR'):
+                        return 'F.lit(None).cast("string")'
+                    if dtype == 'DT_I4':
+                        return 'F.lit(None).cast("int")'
+                    if dtype in ('DT_R8', 'DT_FLOAT'):
+                        return 'F.lit(None).cast("double")'
+                    if dtype in ('DT_DATE', 'DT_DBTIMESTAMP'):
+                        return 'F.lit(None).cast("timestamp")'
+                    return 'F.lit(None)'
+
+                # ---- DATEADD ----
+                if func == 'DATEADD' and len(args) == 3:
+                    part = args[0].strip().strip('"').lower()
+                    n_expr = args[1].strip()
+                    col_expr = _convert(args[2])
+                    if part in ('dd', 'day', 'd'):
+                        return f'F.date_add({col_expr}, {n_expr})'
+                    if part in ('mm', 'month', 'm'):
+                        return f'F.add_months({col_expr}, {n_expr})'
+                    if part in ('yyyy', 'year', 'yy'):
+                        return f'F.add_months({col_expr}, {n_expr} * 12)'
+                    if part in ('hh', 'hour'):
+                        return f'({col_expr} + F.expr("INTERVAL {n_expr} HOURS"))'
+                    if part in ('mi', 'minute', 'n'):
+                        return f'({col_expr} + F.expr("INTERVAL {n_expr} MINUTES"))'
+                    if part in ('ss', 'second', 's'):
+                        return f'({col_expr} + F.expr("INTERVAL {n_expr} SECONDS"))'
+                    return f'F.expr("date_add({args[2].strip()}, {n_expr})")'
+
+                # ---- DATEDIFF ----
+                if func == 'DATEDIFF' and len(args) == 3:
+                    part = args[0].strip().strip('"').lower()
+                    start_expr = _convert(args[1])
+                    end_expr = _convert(args[2])
+                    if part in ('mm', 'month', 'm'):
+                        return f'F.months_between({end_expr}, {start_expr}).cast("int")'
+                    return f'F.datediff({end_expr}, {start_expr})'
+
+                # ---- DATEPART ----
+                if func == 'DATEPART' and len(args) == 2:
+                    part = args[0].strip().strip('"').lower()
+                    col_expr = _convert(args[1])
+                    _dp_map = {
+                        'yyyy': 'year', 'year': 'year', 'yy': 'year',
+                        'mm': 'month', 'month': 'month', 'm': 'month',
+                        'dd': 'dayofmonth', 'day': 'dayofmonth', 'd': 'dayofmonth',
+                        'hh': 'hour', 'hour': 'hour',
+                        'mi': 'minute', 'minute': 'minute', 'n': 'minute',
+                        'ss': 'second', 'second': 'second', 's': 'second',
+                        'dw': 'dayofweek', 'weekday': 'dayofweek',
+                        'dy': 'dayofyear',
+                        'wk': 'weekofyear', 'week': 'weekofyear',
+                        'qq': 'quarter', 'quarter': 'quarter',
                     }
-                    spark_type = type_map.get(dtype, "string")
-                    return f'F.lit(None).cast("{spark_type}"){tail}'
+                    sf = _dp_map.get(part, 'dayofmonth')
+                    return f'F.{sf}({col_expr})'
 
-                # ---- String functions ----
-                if func_name in ("UPPER", "LOWER") and len(args) == 1:
-                    fn = "upper" if func_name == "UPPER" else "lower"
-                    return f"F.{fn}({_conv(args[0])}){tail}"
-                if func_name in ("LTRIM", "RTRIM", "TRIM") and len(args) == 1:
-                    fmap = {"LTRIM": "ltrim", "RTRIM": "rtrim", "TRIM": "trim"}
-                    return f"F.{fmap[func_name]}({_conv(args[0])}){tail}"
-                if func_name == "LEN" and len(args) == 1:
-                    return f"F.length({_conv(args[0])}){tail}"
-                if func_name == "LEFT" and len(args) == 2:
-                    return f"F.substring({_conv(args[0])}, 1, {_conv(args[1])}){tail}"
-                if func_name == "RIGHT" and len(args) == 2:
-                    col_arg = _conv(args[0])
-                    return f"F.substring({col_arg}, F.length({col_arg}) - {_conv(args[1])} + 1, {_conv(args[1])}){tail}"
-                if func_name == "FINDSTRING" and len(args) >= 2:
-                    return f"F.locate({_conv(args[1])}, {_conv(args[0])}){tail}"
-                if func_name == "TOKEN" and len(args) >= 3:
-                    col_arg = _conv(args[0])
-                    delim = args[1].strip().strip('"')
-                    n_val = int(args[2].strip()) if args[2].strip().isdigit() else 1
-                    escaped_delim = _re.escape(delim)
-                    return f'F.split({col_arg}, "[{escaped_delim}]").getItem({n_val - 1}){tail}'
-                if func_name == "TOKENCOUNT" and len(args) == 2:
-                    col_arg = _conv(args[0])
-                    delim = args[1].strip().strip('"')
-                    escaped_delim = _re.escape(delim)
-                    return f'F.size(F.split({col_arg}, "[{escaped_delim}]")){tail}'
-                if func_name == "REPLACE" and len(args) == 3:
-                    return f"F.regexp_replace({_conv(args[0])}, {_conv(args[1])}, {_conv(args[2])}){tail}"
-                if func_name == "SUBSTRING" and len(args) == 3:
-                    return f"F.substring({_conv(args[0])}, {_conv(args[1])}, {_conv(args[2])}){tail}"
-                if func_name == "REVERSE" and len(args) == 1:
-                    return f"F.reverse({_conv(args[0])}){tail}"
-                if func_name == "CODEPOINT" and len(args) == 1:
-                    return f"F.ascii({_conv(args[0])}){tail}"
-                if func_name == "HEX" and len(args) == 1:
-                    return f"F.hex({_conv(args[0])}){tail}"
+                # ---- RIGHT / LEFT ----
+                if func == 'LEFT' and len(args) == 2:
+                    return f'F.substring({_convert(args[0])}, 1, {args[1].strip()})'
+                if func == 'RIGHT' and len(args) == 2:
+                    col_expr = _convert(args[0])
+                    n = args[1].strip()
+                    return f'F.substring({col_expr}, F.length({col_expr}) - {n} + 1, {n})'
 
-                # ---- Math functions ----
-                if func_name == "ABS" and len(args) == 1:
-                    return f"F.abs({_conv(args[0])}){tail}"
-                if func_name in ("CEILING", "FLOOR") and len(args) == 1:
-                    fn = "ceil" if func_name == "CEILING" else "floor"
-                    return f"F.{fn}({_conv(args[0])}){tail}"
-                if func_name == "ROUND" and len(args) >= 1:
-                    if len(args) == 2:
-                        return f"F.round({_conv(args[0])}, {_conv(args[1])}){tail}"
-                    return f"F.round({_conv(args[0])}){tail}"
-                if func_name == "POWER" and len(args) == 2:
-                    return f"F.pow({_conv(args[0])}, {_conv(args[1])}){tail}"
-                if func_name == "SIGN" and len(args) == 1:
-                    return f"F.signum({_conv(args[0])}){tail}"
-                if func_name == "SQUARE" and len(args) == 1:
-                    return f"F.pow({_conv(args[0])}, 2){tail}"
-                if func_name == "SQRT" and len(args) == 1:
-                    return f"F.sqrt({_conv(args[0])}){tail}"
-                if func_name in ("EXP", "LOG", "LOG10") and len(args) == 1:
-                    fmap = {"EXP": "exp", "LOG": "log", "LOG10": "log10"}
-                    return f"F.{fmap[func_name]}({_conv(args[0])}){tail}"
-                if func_name == "LOG2" and len(args) == 1:
-                    return f"F.log2({_conv(args[0])}){tail}"
+                # ---- FINDSTRING ----
+                if func == 'FINDSTRING' and len(args) >= 2:
+                    col_expr = _convert(args[0])
+                    search = args[1].strip()
+                    return f'F.locate({search}, {col_expr})'
 
-                # ---- Trig functions ----
-                if func_name in ("SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN") and len(args) == 1:
-                    fmap = {
-                        "SIN": "sin", "COS": "cos", "TAN": "tan",
-                        "ASIN": "asin", "ACOS": "acos", "ATAN": "atan",
-                    }
-                    return f"F.{fmap[func_name]}({_conv(args[0])}){tail}"
-                if func_name == "ATAN2" and len(args) == 2:
-                    return f"F.atan2({_conv(args[0])}, {_conv(args[1])}){tail}"
+                # ---- TOKEN ----
+                if func == 'TOKEN' and len(args) == 3:
+                    col_expr = _convert(args[0])
+                    delim = args[1].strip()
+                    n = int(args[2].strip())
+                    if delim.startswith('"') and delim.endswith('"'):
+                        inner = delim[1:-1]
+                        escaped = _re.escape(inner)
+                        return f'F.split({col_expr}, "[{escaped}]").getItem({n - 1})'
+                    return f'F.split({col_expr}, {delim}).getItem({n - 1})'
 
-                # ---- Constants ----
-                if func_name == "PI" and len(args) == 0:
-                    return f"F.lit(3.141592653589793){tail}"
-                if func_name == "RAND" and len(args) <= 1:
-                    return f"F.rand(){tail}"
+                # ---- REPLACE ----
+                if func == 'REPLACE' and len(args) == 3:
+                    return f'F.regexp_replace({_convert(args[0])}, {args[1].strip()}, {args[2].strip()})'
 
-                # ---- Bitwise operators ----
-                if func_name == "BITAND" and len(args) == 2:
-                    return f"({_conv(args[0])}.bitwiseAND({_conv(args[1])}))"
-                if func_name == "BITOR" and len(args) == 2:
-                    return f"({_conv(args[0])}.bitwiseOR({_conv(args[1])}))"
-                if func_name == "BITXOR" and len(args) == 2:
-                    return f"({_conv(args[0])}.bitwiseXOR({_conv(args[1])}))"
+                # ---- SUBSTRING ----
+                if func == 'SUBSTRING' and len(args) == 3:
+                    return f'F.substring({_convert(args[0])}, {args[1].strip()}, {args[2].strip()})'
 
-                # ---- Concatenation operator ----
-                if func_name == "CONCATENATE":
-                    parts = [_conv(a) for a in args]
-                    return f'F.concat({", ".join(parts)}){tail}'
+                # ---- ROUND ----
+                if func == 'ROUND' and len(args) == 2:
+                    return f'F.round({_convert(args[0])}, {args[1].strip()})'
 
-        # ------------------------------------------------------------------
-        # 4. String concatenation with +
-        # ------------------------------------------------------------------
-        if _re.search(r'"[^"]*"\s*\+\s*\w+|\w+\s*\+\s*"[^"]*"', result):
-            parts = [p.strip() for p in result.split("+")]
-            spark_parts = []
-            for p in parts:
-                if p.startswith('"') and p.endswith('"'):
-                    spark_parts.append(f'F.lit({p})')
+                # ---- POWER ----
+                if func == 'POWER' and len(args) == 2:
+                    return f'F.pow({_convert(args[0])}, {args[1].strip()})'
+
+                # ---- SQUARE ----
+                if func == 'SQUARE' and len(args) == 1:
+                    return f'F.pow({_convert(args[0])}, 2)'
+
+                # ---- ATAN2 ----
+                if func == 'ATAN2' and len(args) == 2:
+                    return f'F.atan2({_convert(args[0])}, {_convert(args[1])})'
+
+                # ---- BITAND / BITOR / BITXOR ----
+                if func == 'BITAND' and len(args) == 2:
+                    return f'{_convert(args[0])}.bitwiseAND({_convert(args[1])})'
+                if func == 'BITOR' and len(args) == 2:
+                    return f'{_convert(args[0])}.bitwiseOR({_convert(args[1])})'
+                if func == 'BITXOR' and len(args) == 2:
+                    return f'{_convert(args[0])}.bitwiseXOR({_convert(args[1])})'
+
+                # Unknown function — fallback
+                return f'F.expr("{e}")'
+
+            # --- Cast expressions: (DT_TYPE[,params]) expr ---
+            m = _re.match(
+                r'^\(DT_(\w+)(?:\s*,\s*(\d+)(?:\s*,\s*(\d+))?)?\)\s*(.+)$',
+                e, _re.IGNORECASE,
+            )
+            if m:
+                dtype = m.group(1).upper()
+                p1, p2 = m.group(2), m.group(3)
+                inner = _convert(m.group(4))
+                _CAST = {
+                    'STR': 'string', 'WSTR': 'string',
+                    'I1': 'tinyint', 'UI1': 'tinyint',
+                    'I2': 'smallint', 'UI2': 'smallint',
+                    'I4': 'int', 'UI4': 'int',
+                    'I8': 'bigint', 'UI8': 'bigint',
+                    'R4': 'float', 'R8': 'double', 'FLOAT': 'double',
+                    'BOOL': 'boolean',
+                    'DATE': 'date', 'DBDATE': 'date',
+                    'DBTIMESTAMP': 'timestamp', 'DBTIMESTAMP2': 'timestamp',
+                    'GUID': 'string', 'BYTES': 'binary',
+                    'CY': 'decimal(19,4)',
+                }
+                if dtype == 'DECIMAL' and p1:
+                    spark_type = f'decimal(38,{p1})'
+                elif dtype == 'NUMERIC' and p1 and p2:
+                    spark_type = f'decimal({p1},{p2})'
                 else:
-                    spark_parts.append(f'F.col("{p}")')
-            return f'F.concat({", ".join(spark_parts)})'
+                    spark_type = _CAST.get(dtype, 'string')
+                return f'{inner}.cast("{spark_type}")' if not _re.match(r'^-?\d+(\.\d+)?$', inner) else f'F.lit({inner}).cast("{spark_type}")'
 
-        # ------------------------------------------------------------------
-        # 5. Data type casts — (DT_*) operand
-        # ------------------------------------------------------------------
-        _cast_patterns: list[tuple[str, str]] = [
-            (r"^\(DT_STR\s*,\s*\d+\s*,\s*\d+\s*\)\s*(.+)$", "string"),
-            (r"^\(DT_WSTR\s*,\s*\d+\s*\)\s*(.+)$", "string"),
-            (r"^\(DT_(?:I1|UI1)\)\s*(.+)$", "tinyint"),
-            (r"^\(DT_(?:I2|UI2)\)\s*(.+)$", "smallint"),
-            (r"^\(DT_I4\)\s*(.+)$", "int"),
-            (r"^\(DT_UI4\)\s*(.+)$", "int"),
-            (r"^\(DT_(?:I8|UI8)\)\s*(.+)$", "bigint"),
-            (r"^\(DT_R4\)\s*(.+)$", "float"),
-            (r"^\(DT_R8\)\s*(.+)$", "double"),
-            (r"^\(DT_CY\)\s*(.+)$", "decimal(19,4)"),
-            (r"^\(DT_BOOL\)\s*(.+)$", "boolean"),
-            (r"^\(DT_(?:DATE|DBDATE)\)\s*(.+)$", "date"),
-            (r"^\(DT_DBTIMESTAMP2?\)\s*(.+)$", "timestamp"),
-            (r"^\(DT_GUID\)\s*(.+)$", "string"),
-        ]
-        for pat, spark_type in _cast_patterns:
-            cm = _re.match(pat, result, _re.IGNORECASE)
-            if cm:
-                inner = _conv(cm.group(1).strip())
-                return f'{inner}.cast("{spark_type}")'
+            # --- Ternary: cond ? then : else ---
+            m = _re.match(r'^(.+?)\s*\?\s*(.+?)\s*:\s*(.+)$', e)
+            if m:
+                cond = m.group(1).strip()
+                then = m.group(2).strip()
+                else_ = m.group(3).strip()
+                return f'F.when(F.expr("{cond}"), F.expr("{then}")).otherwise(F.expr("{else_}"))'
 
-        cm = _re.match(r"^\(DT_DECIMAL\s*,\s*(\d+)\s*\)\s*(.+)$", result, _re.IGNORECASE)
-        if cm:
-            return f'{_conv(cm.group(2).strip())}.cast("decimal(38,{cm.group(1)})")'
-        cm = _re.match(r"^\(DT_NUMERIC\s*,\s*(\d+)\s*,\s*(\d+)\s*\)\s*(.+)$", result, _re.IGNORECASE)
-        if cm:
-            return f'{_conv(cm.group(3).strip())}.cast("decimal({cm.group(1)},{cm.group(2)})")'
-        cm = _re.match(r"^\(DT_BYTES\s*,\s*\d+\s*\)\s*(.+)$", result, _re.IGNORECASE)
-        if cm:
-            return f'{_conv(cm.group(1).strip())}.cast("binary")'
+            # --- String concatenation with + ---
+            if _re.search(r'"[^"]*"\s*\+\s*\w+|\w+\s*\+\s*"[^"]*"', e):
+                parts = [p.strip() for p in e.split('+')]
+                spark_parts = []
+                for p in parts:
+                    if p.startswith('"') and p.endswith('"'):
+                        spark_parts.append(f'F.lit({p})')
+                    else:
+                        spark_parts.append(f'F.col("{p}")')
+                return f'F.concat({", ".join(spark_parts)})'
 
-        # ------------------------------------------------------------------
-        # 6. Ternary: cond ? a : b → F.when(cond, a).otherwise(b)
-        # ------------------------------------------------------------------
-        m = _re.match(r'^(.+?)\s*\?\s*(.+?)\s*:\s*(.+)$', result)
-        if m:
-            cond = _conv(m.group(1).strip())
-            then = _conv(m.group(2).strip())
-            else_ = _conv(m.group(3).strip())
-            return f"F.when(F.expr({cond!r}), {then}).otherwise({else_})"
+            # --- Boolean operators ---
+            e = e.replace('||', ' | ').replace('&&', ' & ')
 
-        # ------------------------------------------------------------------
-        # 7. Boolean operators
-        # ------------------------------------------------------------------
-        result = result.replace("||", " | ").replace("&&", " & ")
+            # --- Atom: number ---
+            if _re.match(r'^-?\d+(\.\d+)?$', e):
+                return e
 
-        # Fallback
-        return f'F.expr("{result}")'
+            # --- Atom: quoted string ---
+            if e.startswith('"') and e.endswith('"'):
+                return e
+
+            # --- Atom: simple identifier → column reference ---
+            if _re.match(r'^\w+$', e):
+                return f'F.col("{e}")'
+
+            # --- Fallback ---
+            return f'F.expr("{e}")'
+
+        return _convert(expr.strip())
 
     def _write_destination_manifest(
         self,
@@ -1779,7 +1728,7 @@ class SparkNotebookGenerator:
         if not destinations:
             return
 
-        entries: list[dict[str, Any]] = []
+        entries: list[dict] = []
         for dest in destinations:
             cols = [
                 {
@@ -1805,4 +1754,8 @@ class SparkNotebookGenerator:
 
     @staticmethod
     def _sanitize_name(name: str) -> str:
-        return sanitize_name(name, max_length=200)
+        import re
+
+        sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
+        sanitized = re.sub(r"_+", "_", sanitized)
+        return sanitized.strip("_")[:200]

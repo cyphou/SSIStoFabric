@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 import requests
 import structlog
 
+from ssis_to_fabric.engine import is_cell_marker
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -417,12 +419,27 @@ class FabricDeployer:
 
         Looks up the SSIS connection name (extracted from the TODO placeholder)
         in ``_connection_map``.  Falls back to ``default_connection_id``.
+
+        .. note:: Previously this method fell back to *any* connection in the
+           map (``next(iter(...))``) when the exact name didn't match.  That
+           caused silent correctness bugs — e.g. an OLTP_Source activity could
+           get a DW_Target connection.  Now we only fall back to the explicit
+           ``default_connection_id`` and log a warning for unresolved names.
         """
         if ssis_name_hint and ssis_name_hint in self._connection_map:
             return self._connection_map[ssis_name_hint]
-        # Fallback: try without exact match — any connection in the map
-        if self._connection_map:
-            return next(iter(self._connection_map.values()))
+        # Try case-insensitive match before giving up
+        if ssis_name_hint:
+            hint_lower = ssis_name_hint.lower()
+            for key, val in self._connection_map.items():
+                if key.lower() == hint_lower:
+                    return val
+            logger.warning(
+                "connection_not_resolved",
+                ssis_name=ssis_name_hint,
+                available=list(self._connection_map.keys()),
+                fallback="default_connection_id",
+            )
         return self.default_connection_id
 
     def _api_call(
@@ -772,7 +789,7 @@ class FabricDeployer:
 
         for line in lines:
             # Split on section markers like "# --- Imports ---"
-            if line.startswith("# ---") and line.rstrip().endswith("---") and current_cell:
+            if is_cell_marker(line) and current_cell:
                 # Flush current cell
                 cells.append(
                     {
@@ -1027,7 +1044,7 @@ class FabricDeployer:
                     is_ssis_name = ext_conn and not is_todo and not self._looks_like_guid(ext_conn)
                     if is_todo or is_ssis_name:
                         resolved = self._resolve_connection_for_activity(ssis_name_hint)
-                        if resolved:
+                        if resolved and self._looks_like_guid(resolved):
                             act["externalReferences"] = {"connection": resolved}
                             log.info(
                                 "resolved_script_connection",
@@ -1035,8 +1052,17 @@ class FabricDeployer:
                                 connection_id=resolved,
                                 ssis_name=ssis_name_hint or None,
                             )
-                        elif is_todo:
+                        else:
+                            # Strip invalid TODO / non-GUID placeholders to
+                            # prevent the Fabric API from rejecting the payload.
+                            # Log a warning so the user knows manual config is needed.
                             act.pop("externalReferences", None)
+                            log.warning(
+                                "unresolved_connection_stripped",
+                                activity=act.get("name"),
+                                ssis_name=ssis_name_hint or None,
+                                hint="Configure connection manually in Fabric portal",
+                            )
                     else:
                         # Already a valid GUID — keep it
                         act["externalReferences"] = {"connection": ext_conn}

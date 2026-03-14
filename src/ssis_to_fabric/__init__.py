@@ -8,6 +8,7 @@ from ssis_to_fabric.engine.migration_engine import (
     MigrationEngine,
     MigrationItem,
     MigrationPlan,
+    PackageAssessment,
     TargetArtifact,
 )
 from ssis_to_fabric.engine.plugin_registry import (

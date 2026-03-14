@@ -120,13 +120,23 @@ class ConnectionMappingConfig(BaseModel):
     Example YAML::
 
         connection_mappings:
-          OLEDB_Source: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-          ADO_Warehouse: "11111111-2222-3333-4444-555555555555"
+          mappings:
+            OLEDB_Source: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+            ADO_Warehouse: "11111111-2222-3333-4444-555555555555"
+          fabric_target_type_overrides:
+            ADO_Warehouse: "Lakehouse"
     """
 
     mappings: dict[str, str] = Field(
         default_factory=dict,
         description="SSIS connection name → Fabric connection ID / reference name",
+    )
+    fabric_target_type_overrides: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "SSIS connection name → Fabric target type (Warehouse, Lakehouse, Other). "
+            "Overrides the automatic classification based on connection type."
+        ),
     )
 
 

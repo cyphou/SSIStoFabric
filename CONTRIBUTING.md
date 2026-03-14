@@ -177,26 +177,37 @@ docs: update README with new component support table
 
 ## 🎯 Areas for Contribution
 
-See the [Roadmap](README.md#-roadmap) for the full Phase 27–36 plan.
+See the [Roadmap](README.md#-roadmap) for the full roadmap.
 
-### High Priority (Phase 27–29)
+### ✅ Recently Completed
 
-- Package decomposition: auto-split monolithic SSIS packages into smaller Fabric pipelines
-- Migration validation framework: test harness generation, schema drift detection
-- Metadata catalog: searchable index of all packages, tasks, connections, lineage
+- **Phase 27 — Package Decomposition (v4.1.0)**: auto-split monolithic SSIS packages into smaller Fabric pipelines, graph-based subgraph analysis, shared data flow detection
+- **Phase 28 — Migration Validation & Testing (v4.2.0)**: test harness generation, schema drift detection, hash-based record comparison, golden dataset management
+- **Phase 29 — Metadata Catalog & Discovery (v4.3.0)**: unified metadata store, full-text search, auto-tagging, dependency matrix, Purview/Data Catalog export, `catalog` CLI command
 
-### Medium Priority (Phase 30–33)
+### 🔥 Next Up — Phase 30: Multi-Cloud Target Support (v5.0.0)
 
-- Multi-cloud target support: Databricks, AWS Glue, GCP Dataflow generators
-- Automated remediation: resolve TODO stubs with template-based code gen
-- Migration analytics: longitudinal tracking, trend dashboards, Power BI export
-- Disaster recovery: cloud-backed checkpoints, resumable migrations
+- Target abstraction layer: decouple code generation from Fabric-specific output
+- Databricks generator: Delta Live Tables notebooks, Unity Catalog integration
+- AWS Glue generator: PySpark Glue ETL scripts, Glue Crawler configs
+- GCP Dataflow generator: Apache Beam pipelines, Dataflow Flex Templates
+- Target selection via `--target` CLI flag (fabric | databricks | glue | dataflow)
+- Shared transformation library for cross-platform compatibility
 
-### Low Priority (Phase 34–36)
+### High Priority (Phase 31–32)
 
-- Compliance frameworks: HIPAA/PCI-DSS/ISO 27001 rule sets, evidence packages
-- API-first architecture: REST server, Python SDK, webhooks, GraphQL
-- Legacy modernization patterns: medallion architecture, wave planner
+- Automated remediation & self-healing (v5.1.0): resolve TODO stubs with template-based code gen, fallback expression resolution, confidence scoring
+- Migration analytics & reporting (v5.2.0): longitudinal tracking, trend dashboards, Power BI export, velocity metrics
+
+### Medium Priority (Phase 33–34)
+
+- Disaster recovery & high availability (v5.3.0): cloud-backed checkpoints, resumable migrations, rollback to any checkpoint
+- Compliance frameworks (v5.4.0): HIPAA/PCI-DSS/ISO 27001 rule sets, evidence packages, audit trail export
+
+### Lower Priority (Phase 35–36)
+
+- API-first architecture & SDK (v5.5.0): REST server, Python SDK, webhooks, GraphQL
+- Legacy modernization patterns (v6.0.0): medallion architecture, wave planner, 20+ modernization patterns
 
 ---
 
