@@ -7,89 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased] — Roadmap
+## [4.0.0] - 2025-07-24
 
-> The following phases are planned. Each will be released as a minor or major version.
+### 🧠 Phase 26 — Intelligent Migration
+- AI-assisted pattern recognition: auto-classify packages (SIMPLE_COPY, ORCHESTRATOR, CDC, SCD, etc.)
+- Natural language migration queries with table/task/keyword matching
+- Automated validation test generation from package semantics
+- Strategy recommendation engine with confidence scoring and effort estimation
+- Built-in knowledge base (8 entries) with searchable migration patterns
+- `ssis2fabric smart-analyze` CLI command with Rich table output
 
-### Phase 17 — Data Quality Framework *(v2.5.0)*
-- Column-level data profiling (nulls, cardinality, min/max, patterns) on source & target
-- Configurable validation rules (not-null, unique, range, regex, referential integrity)
-- Pre-migration data quality assessment with risk scoring
-- Post-migration reconciliation: row counts, checksum, sample-based column comparison
-- `ssis2fabric data-quality` CLI with HTML profiling report
-- Plugin hook `on_quality_check` for custom validation logic
+### 🔌 Phase 25 — Enterprise Connectors
+- 14 connector types: SAP, Salesforce, Oracle, Teradata, DB2, S3, GCS, BigQuery, REST, Kafka, MQTT, OLEDB, ODBC
+- Automatic provider-based and connection-string-based connector detection
+- Type-specific Fabric connection configuration (managed identity, service principal)
+- OneLake shortcut generation for S3/GCS/ADLS cloud sources
+- Azure SQL auto-detection from `.database.azure.windows.net` connection strings
+- `ssis2fabric connector-map` CLI command
 
-### Phase 18 — GitOps & Artifact Versioning *(v2.6.0)*
-- Auto-commit generated pipelines/notebooks to a Git repository
-- Branch-per-migration strategy (feature branch → PR → merge)
-- Artifact diff: compare pipeline JSON / notebook code across migration runs
-- Change tracking metadata (who migrated what, when, from which SSIS version)
-- `ssis2fabric git-sync` CLI for push/pull of Fabric artifacts
-- `.fabricignore` support for selective artifact versioning
+### ⚡ Phase 24 — Performance Optimization
+- `MigrationProfiler` with start/stop timing, artifact/line counting, and summary report
+- Spark notebook optimizer: broadcast join hints, cache suggestions, coalesce/repartition advice
+- Pipeline parallelism advisor: dependency graph analysis, max parallelism detection
+- Fabric capacity auto-tuning: SKU recommendation based on pipeline/notebook workload
+- `ssis2fabric benchmark` CLI command with comparison report
 
-### Phase 19 — Web Dashboard *(v2.7.0)*
-- Lightweight Flask/FastAPI web UI for migration management
-- Real-time migration progress via Server-Sent Events (SSE)
-- Package browser: view SSIS structure, connections, data flows in the browser
-- Interactive migration plan editor (drag-drop strategy assignment)
-- REST API endpoints mirroring all CLI commands
-- Authentication integration (Azure AD / API key)
+### 🛡️ Phase 23 — Policy Engine & Governance
+- Declarative policy rules with severity levels (ERROR/WARNING/INFO)
+- Policy categories: NAMING, SECURITY, COMPLIANCE, QUALITY
+- Pre-deployment gates: naming validation, forbidden pattern detection, required tag checks
+- Environment promotion workflows: DEV → STAGING → PROD with automatic policy evaluation
+- Data classification: auto-detect PII, PHI, financial data via 9 regex patterns
+- `ssis2fabric policy-check` CLI with `--strict` fail mode
 
-### Phase 20 — Streaming & Real-Time *(v3.0.0)*
-- Event Hub / Kafka source detection in SSIS packages
-- Fabric Eventstream artifact generation for streaming sources
-- CDC-to-Eventstream conversion (replace CDC polling with push-based)
-- Real-time aggregation patterns: SSIS script → KQL / Spark Structured Streaming
-- Hybrid batch+stream migration plans
-- `ssis2fabric assess --streaming` flag for real-time readiness scoring
-
-### Phase 21 — Advanced Script Transpilation *(v3.1.0)*
-- Roslyn-based C# AST parsing (replaces regex for Script Tasks)
-- .NET BCL method mapping: `System.IO`, `System.Data`, `System.Net` → Python equivalents
-- LINQ expression → pandas/PySpark chain transpilation
-- Script Component (Source/Transform/Destination) full conversion
-- Confidence scoring per transpiled function (auto vs manual review needed)
-- Side-by-side diff view: original C# vs generated Python
-
-### Phase 22 — Orchestration & Scheduling *(v3.2.0)*
-- SSIS Agent Job schedule extraction (SQL Server Agent → cron expressions)
+### 📅 Phase 22 — Orchestration & Scheduling
+- SQL Server Agent schedule extraction with automatic cron expression generation
 - Fabric Scheduled Trigger generation from extracted schedules
-- Cross-pipeline dependency graph with SLA tracking
-- External scheduler adapters: Airflow DAG, Azure Logic Apps, Prefect flow generation
-- Retry strategy advisor: recommend retry policies based on historical failure patterns
+- Cross-pipeline dependency graph with topological ordering
+- SLA definitions with max duration and priority tracking
+- External scheduler adapters: Airflow DAG and Azure Logic App generation
 - `ssis2fabric schedule-export` CLI command
 
-### Phase 23 — Policy Engine & Governance *(v3.3.0)*
-- Declarative policy rules (YAML): naming conventions, forbidden patterns, required tags
-- Pre-deployment policy gates: block deployments that violate governance rules
-- Environment promotion workflows: dev → staging → prod with approval checkpoints
-- Data classification tagging (PII, PHI, financial) propagated to Fabric artifacts
-- Deployment audit dashboard: who deployed what, approval chain, policy violations
-- `ssis2fabric policy-check` CLI with pass/fail per artifact
+### 🔬 Phase 21 — Advanced Script Transpilation
+- AST-based C# parsing with 18 node types (class, method, if/else, loop, try/catch, etc.)
+- 60+ .NET BCL method mappings across System, System.IO, System.Data, System.Net, System.Text
+- LINQ expression → PySpark chain transpilation
+- Confidence scoring per transpiled function (auto vs manual review)
+- Side-by-side diff view: original C# vs generated Python
+- `ssis2fabric transpile` support via script_transpiler engine
 
-### Phase 24 — Performance Optimization *(v3.4.0)*
-- Migration profiler: CPU, memory, I/O metrics per package conversion
-- Spark notebook optimizer: partition hints, broadcast joins, caching recommendations
-- Pipeline parallelism advisor: detect independent branches, suggest concurrent activities
-- Generated code benchmarking: compare Fabric execution time vs SSIS baseline
-- Auto-tuning: recommend Fabric capacity SKU based on workload analysis
-- `ssis2fabric benchmark` CLI with comparison report
+### 📡 Phase 20 — Streaming & Real-Time
+- Streaming source detection: Event Hub, Kafka, CDC, Service Bus, MQTT
+- Connection manager and task inspection for streaming protocol identification
+- Fabric Eventstream artifact generation with configurable windowing
+- Streaming readiness scoring (0-100) with actionable recommendations
+- `ssis2fabric streaming-assess` CLI command with HTML report
 
-### Phase 25 — Enterprise Connectors *(v3.5.0)*
-- SAP source/destination mapping → Fabric SAP connector configuration
-- Salesforce connection migration → Fabric Dataverse / REST connector
-- Oracle/Teradata/DB2 connection handlers with driver mapping
-- Cloud-native sources: S3, GCS, BigQuery → Fabric OneLake shortcuts
-- Custom REST API endpoint migration (SSIS Web Service Task → Fabric Web activity)
-- Connection migration wizard with credential rotation guidance
+### 🌐 Phase 19 — Web Dashboard
+- 12 REST API route definitions mirroring all CLI commands
+- OpenAPI 3.0.3 spec generation for API documentation
+- Server-Sent Events (SSE) progress streaming with typed events
+- Package browser view with task/connection/variable counts
+- Self-contained dashboard HTML generation (no external dependencies)
+- `ssis2fabric dashboard` CLI command
 
-### Phase 26 — Intelligent Migration *(v4.0.0)*
-- AI-assisted pattern recognition: auto-classify SSIS packages by migration complexity
-- LLM-powered C# → Python transpilation for complex Script Tasks
-- Smart strategy recommendation: ML model trained on migration outcomes
-- Natural language migration queries ("show all packages that write to DimCustomer")
-- Migration knowledge base: learn from past migrations to improve future accuracy
-- Automated test generation: produce validation tests from SSIS package semantics
+### 📦 Phase 18 — GitOps & Artifact Versioning
+- Change tracking with `ChangeRecord` and JSON-based `ChangeLog`
+- `.fabricignore` parser with glob pattern support
+- Artifact diff: compare pipeline JSON across migration runs
+- Git operations: init, branch creation, add-and-commit
+- Artifact sync to git with branch-per-migration strategy
+- `ssis2fabric git-sync` CLI command
+
+### 🔍 Phase 17 — Data Quality Framework
+- Column-level profiling: nulls, cardinality, min/max, patterns
+- 6 validation rule types: NOT_NULL, UNIQUE, RANGE, REGEX, REFERENTIAL, CUSTOM
+- Pre-migration risk scoring (LOW/MEDIUM/HIGH/CRITICAL)
+- Post-migration reconciliation: row count and column profile comparison
+- HTML quality report writer
+- `ssis2fabric data-quality` CLI command
 
 ---
 

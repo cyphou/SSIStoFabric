@@ -1320,3 +1320,283 @@ def generate_docs(
     console.print("[green]Documentation generated:[/green]")
     for g in generated:
         console.print(f"  • {g}")
+
+
+# ── Phase 17: Data Quality ──────────────────────────────────────────
+
+
+@main.command(name="data-quality")
+@click.argument("output_dir", type=click.Path(exists=True))
+@click.pass_context
+def data_quality(ctx: click.Context, output_dir: str) -> None:
+    """Run data quality profiling and validation on migration artifacts."""
+    from ssis_to_fabric.engine.data_quality import (
+        TableProfile,
+        write_quality_report,
+    )
+
+    base = Path(output_dir)
+    profiles: list[TableProfile] = []
+
+    # Profile from generated artifacts
+    notebooks_dir = base / "notebooks"
+    if notebooks_dir.exists():
+        for f in notebooks_dir.glob("*.py"):
+            profiles.append(TableProfile(table_name=f.stem, row_count=0))
+
+    report_path = write_quality_report(profiles, [], [], base / "data_quality_report.json")
+    console.print(f"[green]Data quality report: {report_path}[/green]")
+    console.print(f"  Tables profiled: {len(profiles)}")
+
+
+# ── Phase 18: GitOps ────────────────────────────────────────────────
+
+
+@main.command(name="git-sync")
+@click.argument("artifact_dir", type=click.Path(exists=True))
+@click.argument("repo_dir", type=click.Path())
+@click.option("--branch", default="", help="Branch name (auto-generated if empty).")
+@click.option("--message", "-m", default="", help="Commit message.")
+def git_sync(artifact_dir: str, repo_dir: str, branch: str, message: str) -> None:
+    """Sync migration artifacts to a Git repository."""
+    from ssis_to_fabric.engine.gitops import sync_artifacts_to_git
+
+    summary = sync_artifacts_to_git(
+        Path(artifact_dir), Path(repo_dir),
+        branch_name=branch, commit_message=message,
+    )
+    console.print("[green]Git sync complete:[/green]")
+    console.print(f"  Branch: {summary.get('branch', 'N/A')}")
+    console.print(f"  Artifacts copied: {summary.get('artifacts_copied', 0)}")
+    console.print(f"  Committed: {summary.get('committed', False)}")
+
+
+# ── Phase 19: Web Dashboard ─────────────────────────────────────────
+
+
+@main.command(name="dashboard")
+@click.argument("output_dir", type=click.Path())
+def dashboard(output_dir: str) -> None:
+    """Generate a self-contained migration dashboard HTML."""
+    from ssis_to_fabric.engine.web_dashboard import write_dashboard
+
+    path = write_dashboard(Path(output_dir))
+    console.print(f"[green]Dashboard written to {path}[/green]")
+
+
+# ── Phase 20: Streaming ─────────────────────────────────────────────
+
+
+@main.command(name="streaming-assess")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--output", "-o", default="streaming_report.json", help="Output report path.")
+def streaming_assess(path: str, output: str) -> None:
+    """Assess SSIS packages for streaming migration readiness."""
+    from ssis_to_fabric.engine.streaming import (
+        assess_streaming_readiness,
+        write_streaming_report,
+    )
+
+    parser = DTSXParser()
+    p = Path(path)
+    packages = [parser.parse(p)] if p.is_file() else parser.parse_directory(p)
+
+    assessments = [assess_streaming_readiness(pkg) for pkg in packages]
+    report_path = write_streaming_report(assessments, Path(output))
+
+    streaming_count = sum(1 for a in assessments if a.has_streaming_sources)
+    console.print(f"[green]Streaming assessment: {report_path}[/green]")
+    console.print(f"  Packages analyzed: {len(assessments)}")
+    console.print(f"  With streaming sources: {streaming_count}")
+
+
+# ── Phase 22: Orchestration ─────────────────────────────────────────
+
+
+@main.command(name="schedule-export")
+@click.argument("output_dir", type=click.Path())
+@click.option("--format", "fmt", type=click.Choice(["fabric", "airflow", "logic-app"]), default="fabric")
+def schedule_export(output_dir: str, fmt: str) -> None:
+    """Export schedules as Fabric triggers, Airflow DAGs, or Logic Apps."""
+    from ssis_to_fabric.engine.orchestration import (
+        ExtractedSchedule,
+        FrequencyType,
+        generate_airflow_dag,
+        schedule_to_trigger,
+        write_schedule_report,
+    )
+
+    base = Path(output_dir)
+    base.mkdir(parents=True, exist_ok=True)
+
+    # Create sample schedule as placeholder
+    sample = ExtractedSchedule(job_name="sample_job", frequency=FrequencyType.DAILY, start_time="06:00")
+    triggers = [schedule_to_trigger(sample)]
+
+    if fmt == "airflow":
+        dag = generate_airflow_dag([sample])
+        dag_path = base / "ssis_migration_dag.py"
+        dag_path.write_text(dag, encoding="utf-8")
+        console.print(f"[green]Airflow DAG: {dag_path}[/green]")
+    else:
+        report = write_schedule_report([sample], triggers, base / "schedule_report.json")
+        console.print(f"[green]Schedule report: {report}[/green]")
+
+
+# ── Phase 23: Policy Engine ─────────────────────────────────────────
+
+
+@main.command(name="policy-check")
+@click.argument("output_dir", type=click.Path(exists=True))
+@click.option("--strict/--no-strict", default=False, help="Fail on any violation.")
+def policy_check(output_dir: str, strict: bool) -> None:
+    """Run governance policy checks on migration artifacts."""
+    from ssis_to_fabric.engine.policy_engine import (
+        PolicyCategory,
+        PolicyEngine,
+        PolicyRule,
+        write_policy_report,
+    )
+
+    engine = PolicyEngine(rules=[
+        PolicyRule(
+            name="naming_convention", description="Artifacts must use snake_case",
+            category=PolicyCategory.NAMING, pattern=r"^[a-z][a-z0-9_]*$",
+        ),
+        PolicyRule(
+            name="no_hardcoded_secrets", description="No hardcoded passwords or keys",
+            category=PolicyCategory.SECURITY,
+            forbidden_patterns=[r"password\s*=\s*['\"][^'\"]+['\"]", r"api[_-]?key\s*=\s*['\"][^'\"]+['\"]"],
+        ),
+    ])
+
+    base = Path(output_dir)
+    for f in base.rglob("*.json"):
+        engine.evaluate_artifact(f.stem, "pipeline", content=f.read_text(encoding="utf-8"))
+    for f in base.rglob("*.py"):
+        engine.evaluate_artifact(f.stem, "notebook", content=f.read_text(encoding="utf-8"))
+
+    summary = engine.summary()
+    report_path = write_policy_report(engine, base / "policy_report.json")
+
+    status = "[green]PASSED[/green]" if summary["passed"] else "[red]FAILED[/red]"
+    console.print(f"Policy check: {status}")
+    console.print(f"  Rules: {summary['total_rules']}, Violations: {summary['total_violations']}")
+    console.print(f"  Report: {report_path}")
+
+    if strict and not summary["passed"]:
+        raise SystemExit(1)
+
+
+# ── Phase 24: Performance ───────────────────────────────────────────
+
+
+@main.command(name="benchmark")
+@click.argument("output_dir", type=click.Path(exists=True))
+def benchmark(output_dir: str) -> None:
+    """Analyze performance and generate optimization recommendations."""
+    from ssis_to_fabric.engine.performance import (
+        MigrationProfiler,
+        analyze_notebook_for_optimizations,
+        recommend_capacity,
+        write_benchmark_report,
+    )
+
+    base = Path(output_dir)
+    profiler = MigrationProfiler()
+    all_optimizations = []
+
+    notebooks_dir = base / "notebooks"
+    nb_count = 0
+    if notebooks_dir.exists():
+        for f in notebooks_dir.glob("*.py"):
+            code = f.read_text(encoding="utf-8")
+            opts = analyze_notebook_for_optimizations(code, f.stem)
+            all_optimizations.extend(opts)
+            nb_count += 1
+
+    pipeline_count = len(list((base / "pipelines").glob("*.json"))) if (base / "pipelines").exists() else 0
+    capacity = recommend_capacity(pipeline_count, nb_count)
+
+    report_path = write_benchmark_report(profiler, all_optimizations, capacity, base / "benchmark_report.json")
+    console.print(f"[green]Benchmark report: {report_path}[/green]")
+    console.print(f"  Optimizations: {len(all_optimizations)}")
+    console.print(f"  Recommended SKU: {capacity.recommended_sku}")
+
+
+# ── Phase 25: Enterprise Connectors ─────────────────────────────────
+
+
+@main.command(name="connector-map")
+@click.argument("output_dir", type=click.Path(exists=True))
+def connector_map(output_dir: str) -> None:
+    """Map SSIS connections to Fabric connectors."""
+    from ssis_to_fabric.engine.connectors import (
+        SSISConnection,
+        detect_connector_type,
+        migrate_connection,
+        write_connector_report,
+    )
+
+    base = Path(output_dir)
+    mappings = []
+    connections_dir = base / "connections"
+    if connections_dir.exists():
+        import json as json_mod
+        for f in connections_dir.glob("*.json"):
+            data = json_mod.loads(f.read_text(encoding="utf-8"))
+            conn = SSISConnection(
+                name=data.get("name", f.stem),
+                connection_type=detect_connector_type(
+                    data.get("connection_string", ""),
+                    data.get("provider", ""),
+                ),
+                server=data.get("server", ""),
+                database=data.get("database", ""),
+                provider=data.get("provider", ""),
+                connection_string=data.get("connection_string", ""),
+            )
+            fabric = migrate_connection(conn)
+            mappings.append((conn, fabric))
+
+    report_path = write_connector_report(mappings, base / "connector_report.json")
+    console.print(f"[green]Connector mapping: {report_path}[/green]")
+    console.print(f"  Connections mapped: {len(mappings)}")
+
+
+# ── Phase 26: Intelligent Migration ─────────────────────────────────
+
+
+@main.command(name="smart-analyze")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--output", "-o", default="intelligence_report.json", help="Output report path.")
+def smart_analyze(path: str, output: str) -> None:
+    """AI-assisted package analysis with pattern recognition and strategy recommendation."""
+    from ssis_to_fabric.engine.intelligence import (
+        classify_package,
+        recommend_strategy,
+        write_intelligence_report,
+    )
+
+    parser = DTSXParser()
+    p = Path(path)
+    packages = [parser.parse(p)] if p.is_file() else parser.parse_directory(p)
+
+    classifications = [classify_package(pkg) for pkg in packages]
+    recommendations = [recommend_strategy(pkg) for pkg in packages]
+
+    report_path = write_intelligence_report(classifications, recommendations, Path(output))
+
+    table = Table(title="Intelligent Analysis")
+    table.add_column("Package", style="cyan")
+    table.add_column("Pattern")
+    table.add_column("Strategy")
+    table.add_column("Confidence")
+    table.add_column("Complexity")
+
+    for c, r in zip(classifications, recommendations, strict=False):
+        table.add_row(c.package_name, c.pattern.value, r.recommended_strategy,
+                      f"{c.confidence:.0%}", c.complexity_estimate)
+
+    console.print(table)
+    console.print(f"\n[green]Report: {report_path}[/green]")

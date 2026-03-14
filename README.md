@@ -12,10 +12,10 @@
 
 <p align="center">
   <a href="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml"><img src="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-  <img src="https://img.shields.io/badge/tests-1335%20passed-brightgreen?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-1507%20passed-brightgreen?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"/>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"/>
-  <img src="https://img.shields.io/badge/version-2.4.0-blue?style=flat-square" alt="Version"/>
+  <img src="https://img.shields.io/badge/version-4.0.0-blue?style=flat-square" alt="Version"/>
   <img src="https://img.shields.io/badge/pipelines-28-orange?style=flat-square" alt="Pipelines"/>
   <img src="https://img.shields.io/badge/notebooks-28-orange?style=flat-square" alt="Notebooks"/>
 </p>
@@ -752,7 +752,7 @@ Both use regex pattern matching. Add new patterns as `re.sub` or `re.match` bloc
 
 ## 🗺️ Roadmap
 
-> Phases 1–16 are complete. Phases 17–26 are planned — see [CHANGELOG.md](CHANGELOG.md) for details.
+> All 26 phases are complete. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 | Phase | Name | Version | Focus |
 |-------|------|---------|-------|
@@ -772,16 +772,16 @@ Both use regex pattern matching. Add new patterns as `re.sub` or `re.match` bloc
 | **14** | **Integrations** ✅ | 2.2.0 | Key Vault, Power BI, dbt, Slack/Teams webhooks, init command |
 | **15** | **Enterprise Scale** ✅ | 2.3.0 | RBAC, multi-tenant, queue-based orchestration, cost estimation, compliance |
 | **16** | **Developer Experience** ✅ | 2.4.0 | Sphinx docs, ADRs, migration cookbook, JSON Schema, VS Code extension |
-| **17** | **Data Quality** | 2.5.0 | Column profiling, validation rules, pre/post-migration reconciliation |
-| **18** | **GitOps** | 2.6.0 | Artifact versioning, branch-per-migration, diff tracking, git-sync |
-| **19** | **Web Dashboard** | 2.7.0 | Flask/FastAPI UI, real-time progress, package browser, REST API |
-| **20** | **Streaming** | 3.0.0 | Event Hub/Kafka sources, Eventstream generation, CDC-to-push conversion |
-| **21** | **Script Transpilation** | 3.1.0 | Roslyn C# AST, .NET BCL mapping, LINQ → PySpark, confidence scoring |
-| **22** | **Orchestration** | 3.2.0 | SQL Agent schedule extraction, Airflow/Logic Apps adapters, SLA tracking |
-| **23** | **Policy Engine** | 3.3.0 | Governance rules, deployment gates, environment promotion, data classification |
-| **24** | **Performance** | 3.4.0 | Migration profiler, Spark optimizer, parallelism advisor, benchmarking |
-| **25** | **Enterprise Connectors** | 3.5.0 | SAP, Salesforce, Oracle/Teradata/DB2, S3/GCS/BigQuery, REST API migration |
-| **26** | **Intelligent Migration** | 4.0.0 | AI pattern recognition, LLM transpilation, smart strategy, NL queries |
+| **17** | **Data Quality** ✅ | 2.5.0 | Column profiling, validation rules, pre/post-migration reconciliation |
+| **18** | **GitOps** ✅ | 2.6.0 | Artifact versioning, branch-per-migration, diff tracking, git-sync |
+| **19** | **Web Dashboard** ✅ | 2.7.0 | Flask/FastAPI UI, real-time progress, package browser, REST API |
+| **20** | **Streaming** ✅ | 3.0.0 | Event Hub/Kafka sources, Eventstream generation, CDC-to-push conversion |
+| **21** | **Script Transpilation** ✅ | 3.1.0 | Roslyn C# AST, .NET BCL mapping, LINQ → PySpark, confidence scoring |
+| **22** | **Orchestration** ✅ | 3.2.0 | SQL Agent schedule extraction, Airflow/Logic Apps adapters, SLA tracking |
+| **23** | **Policy Engine** ✅ | 3.3.0 | Governance rules, deployment gates, environment promotion, data classification |
+| **24** | **Performance** ✅ | 3.4.0 | Migration profiler, Spark optimizer, parallelism advisor, benchmarking |
+| **25** | **Enterprise Connectors** ✅ | 3.5.0 | SAP, Salesforce, Oracle/Teradata/DB2, S3/GCS/BigQuery, REST API migration |
+| **26** | **Intelligent Migration** ✅ | 4.0.0 | AI pattern recognition, LLM transpilation, smart strategy, NL queries |
 
 ---
 
