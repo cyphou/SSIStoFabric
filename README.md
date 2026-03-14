@@ -12,10 +12,10 @@
 
 <p align="center">
   <a href="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml"><img src="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-  <img src="https://img.shields.io/badge/tests-1250%20passed-brightgreen?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-1306%20passed-brightgreen?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"/>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"/>
-  <img src="https://img.shields.io/badge/version-2.2.0-blue?style=flat-square" alt="Version"/>
+  <img src="https://img.shields.io/badge/version-2.3.0-blue?style=flat-square" alt="Version"/>
   <img src="https://img.shields.io/badge/pipelines-28-orange?style=flat-square" alt="Pipelines"/>
   <img src="https://img.shields.io/badge/notebooks-28-orange?style=flat-square" alt="Notebooks"/>
 </p>
@@ -595,7 +595,7 @@ ssis2fabric extract-ssisdb "<conn-str>" --folder MyFolder --project MyProject
 ## 🧪 Testing
 
 <p align="center">
-  <img src="https://img.shields.io/badge/tests-1250%20passed-brightgreen?style=for-the-badge" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-1306%20passed-brightgreen?style=for-the-badge" alt="Tests"/>
   <img src="https://img.shields.io/badge/unit%20tests-792-blue?style=for-the-badge" alt="Unit Tests"/>
   <img src="https://img.shields.io/badge/regression-14-blue?style=for-the-badge" alt="Regression Tests"/>
 </p>
@@ -770,7 +770,7 @@ Both use regex pattern matching. Add new patterns as `re.sub` or `re.match` bloc
 | **12** | **Deploy Hardening** ✅ | 2.0.0 | Blue-green deployment, rollback CLI, rate limiting, state machine |
 | **13** | **Testing & Quality** ✅ | 2.1.0 | Code validation, expression fuzzing, M syntax, benchmarks, mutation testing |
 | **14** | **Integrations** ✅ | 2.2.0 | Key Vault, Power BI, dbt, Slack/Teams webhooks, init command |
-| **15** | **Enterprise Scale** | 2.3.0 | RBAC, multi-tenant, queue-based orchestration, horizontal scaling |
+| **15** | **Enterprise Scale** ✅ | 2.3.0 | RBAC, multi-tenant, queue-based orchestration, cost estimation, compliance |
 | **16** | **Developer Experience** | 2.4.0 | Sphinx docs, ADRs, migration cookbook, JSON Schema, VS Code extension |
 
 ---

@@ -11,14 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > The following phases are planned. Each will be released as a minor or major version.
 
-### Phase 15 — Enterprise Scale *(v2.3.0)*
-- RBAC support (role-based package-level access control with Azure AD groups)
-- Multi-tenant migration (parallel deployment to multiple workspace targets)
-- Queue-based migration orchestration (async job processing with progress tracking)
-- Horizontal scaling (distribute work across machines via Redis/Azure Queue)
-- Cost estimation (Fabric CU consumption projections per generated artifact)
-- Compliance reporting (data flow audit trail for SOC2/GDPR)
-
 ### Phase 16 — Developer Experience *(v2.4.0)*
 - Sphinx API documentation auto-generated from docstrings
 - Architecture Decision Records (ADRs) for all major design choices
@@ -26,6 +18,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migration cookbook (common SSIS patterns with before/after code comparisons)
 - JSON Schema export for `migration_config.yaml` validation by external tools
 - VS Code extension (inline assessment, syntax highlighting for generated artifacts)
+
+---
+
+## [2.3.0] - 2026-03-14
+
+### 🏢 Phase 15 — Enterprise Scale
+
+#### RBAC — Role-Based Access Control
+- `MigrationRole` enum: `ADMIN`, `OPERATOR`, `VIEWER`, `DEPLOYER` with granular permissions
+- `RBACPolicy` dataclass: principal (Azure AD group), role, scope (package or wildcard)
+- `RBACConfig`: enable/disable, default role fallback, policy list with `authorize()` method
+- Scope-based filtering: restrict roles to specific packages or grant wildcard access
+- Serializable: `to_dict()` / `from_dict()` for YAML/JSON configuration
+
+#### Multi-Tenant Migration
+- `TenantTarget` dataclass: tenant_id, workspace_id, connection_mappings, environment
+- `MultiTenantConfig`: list of tenant targets with configurable parallelism
+- `plan_multi_tenant_deployment()`: generates batched deployment plans across tenants
+- `TenantDeploymentResult`: per-tenant success/failure tracking
+
+#### Queue-Based Migration Orchestration
+- `MigrationQueue` class: in-process job queue with priority ordering
+- `MigrationJob` dataclass: job lifecycle (PENDING → RUNNING → COMPLETED/FAILED/CANCELLED)
+- `submit()`, `claim()`, `complete()`, `fail()`, `cancel()` job lifecycle methods
+- `retry_failed()`: re-queue failed jobs within max attempt limits
+- `save()` / `load()`: persist queue state to JSON for crash recovery
+- Worker identity: `generate_worker_id()` for distributed scenarios
+
+#### Cost Estimation
+- `estimate_migration_cost()`: projects Fabric CU consumption per artifact
+- Complexity-weighted: pipeline activity count and notebook line count
+- Configurable daily execution multiplier
+- `ssis2fabric cost-estimate` CLI command with formatted table output
+- `write_cost_report()`: JSON report with per-artifact and aggregate totals
+
+#### Compliance Reporting
+- `ComplianceTracker` class: records audit trail for SOC2/GDPR compliance
+- `AuditEntry` dataclass: timestamp, action, principal, package, correlation_id
+- `data_lineage_report()`: aggregated compliance summary
+- `write_audit_log()`: persists audit entries + summary to JSON
+- `ssis2fabric compliance-report` CLI command
+- Filter queries: `entries_for_package()`, `entries_for_principal()`
 
 ---
 

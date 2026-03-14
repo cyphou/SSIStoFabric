@@ -1182,3 +1182,83 @@ def powerbi_dataset(
     path = write_powerbi_dataset(dataset, Path(output_dir))
     console.print(f"[green]Power BI dataset definition written to {path}[/green]")
     console.print(f"  Tables: {len(dataset.tables)}")
+
+
+@main.command(name="cost-estimate")
+@click.argument("output_dir", type=click.Path(exists=True))
+@click.option(
+    "--daily-executions",
+    default=1,
+    type=int,
+    help="Expected daily pipeline executions (default: 1).",
+)
+@click.pass_context
+def cost_estimate(
+    ctx: click.Context,
+    output_dir: str,
+    daily_executions: int,
+) -> None:
+    """Estimate Fabric CU consumption for generated artifacts."""
+    from ssis_to_fabric.engine.enterprise import estimate_migration_cost, write_cost_report
+
+    base = Path(output_dir)
+    estimates = estimate_migration_cost(
+        base / "pipelines",
+        base / "notebooks",
+        daily_executions=daily_executions,
+    )
+
+    if not estimates:
+        console.print("[yellow]No artifacts found to estimate.[/yellow]")
+        return
+
+    table = Table(title="Cost Estimation (approximate)")
+    table.add_column("Artifact")
+    table.add_column("Type")
+    table.add_column("CU-seconds/day", justify="right")
+    table.add_column("Complexity", justify="right")
+
+    total_cu = 0.0
+    for e in estimates:
+        table.add_row(e.artifact_name, e.artifact_type, f"{e.estimated_cu_seconds:.1f}", f"{e.complexity_factor:.1f}")
+        total_cu += e.estimated_cu_seconds
+
+    console.print(table)
+    console.print(f"\n[bold]Total estimated CU-seconds/day:[/bold] {total_cu:.1f}")
+    console.print(f"[bold]Total estimated CU-hours/day:[/bold] {total_cu / 3600:.4f}")
+
+    report_path = write_cost_report(estimates, base / "cost_report.json")
+    console.print(f"\nDetailed report: {report_path}")
+
+
+@main.command(name="compliance-report")
+@click.argument("output_dir", type=click.Path(exists=True))
+@click.pass_context
+def compliance_report(
+    ctx: click.Context,
+    output_dir: str,
+) -> None:
+    """Generate a compliance audit report for the migration."""
+    from ssis_to_fabric.engine.enterprise import ComplianceTracker
+
+    base = Path(output_dir)
+    tracker = ComplianceTracker()
+
+    # Record artifact-based audit entries
+    pipelines_dir = base / "pipelines"
+    if pipelines_dir.exists():
+        for f in pipelines_dir.glob("*.json"):
+            tracker.record("artifact_generated", package=f.stem, artifact_type="pipeline")
+
+    notebooks_dir = base / "notebooks"
+    if notebooks_dir.exists():
+        for f in notebooks_dir.glob("*.py"):
+            tracker.record("artifact_generated", package=f.stem, artifact_type="notebook")
+
+    report = tracker.data_lineage_report()
+    report_path = tracker.write_audit_log(base / "compliance_audit.json")
+
+    console.print("[green]Compliance audit report generated.[/green]")
+    console.print(f"  Events: {report['total_events']}")
+    console.print(f"  Packages: {report['unique_packages']}")
+    console.print(f"  Report: {report_path}")
