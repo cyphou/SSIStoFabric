@@ -627,11 +627,20 @@ class MigrationEngine:
         }
 
     def _write_report(self, plan: MigrationPlan, output_dir: Path) -> None:
-        """Write migration report to output directory."""
+        """Write migration report (JSON + HTML) to output directory."""
         report_path = output_dir / "migration_report.json"
         with open(report_path, "w") as f:
             json.dump(plan.to_dict(), f, indent=2)
         logger.info("report_written", path=str(report_path))
+
+        # Auto-generate HTML dashboard alongside JSON report
+        try:
+            from ssis_to_fabric.engine.report_generator import ReportGenerator
+
+            html_path = ReportGenerator().generate(output_dir)
+            logger.info("html_report_generated", path=str(html_path))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("html_report_failed", error=str(exc))
 
     def _generate_logging_config(self, packages: list[SSISPackage], output_dir: Path) -> None:
         """Write logging_config.json collecting all log providers from packages."""

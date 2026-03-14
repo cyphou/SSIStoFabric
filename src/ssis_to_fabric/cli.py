@@ -282,6 +282,12 @@ def migrate(
     console.print(table)
     elapsed_s = result.total_elapsed_ms / 1000 if result.total_elapsed_ms else 0
     console.print(f"\nOutput directory: [bold]{config.output_dir}[/bold]")
+
+    # Check for generated HTML report
+    html_report = Path(config.output_dir) / "migration_report.html"
+    if html_report.exists():
+        console.print(f"HTML report: [bold cyan]{html_report}[/bold cyan]")
+
     if elapsed_s:
         console.print(f"Elapsed: [bold]{elapsed_s:.1f}s[/bold]  ·  Correlation ID: [dim]{result.correlation_id}[/dim]")
 

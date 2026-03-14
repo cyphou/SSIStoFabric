@@ -180,6 +180,23 @@ class TestMigrationExecution:
         assert "summary" in report
 
     @pytest.mark.unit
+    def test_execute_generates_html_report(
+        self, simple_package: SSISPackage, default_config: MigrationConfig
+    ) -> None:
+        """HTML report should be auto-generated alongside migration_report.json."""
+        engine = MigrationEngine(default_config)
+        engine.execute([simple_package])
+
+        html_path = default_config.output_dir / "migration_report.html"
+        assert html_path.exists(), "migration_report.html should be auto-generated during migration"
+
+        html_content = html_path.read_text(encoding="utf-8")
+        assert "<!DOCTYPE html>" in html_content
+        assert "SSIStoFabric Migration Report" in html_content
+        assert "Total Items" in html_content
+        assert "Completed" in html_content
+
+    @pytest.mark.unit
     def test_generated_pipeline_is_valid_json(
         self, simple_package: SSISPackage, default_config: MigrationConfig
     ) -> None:
