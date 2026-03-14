@@ -18,8 +18,8 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# SQL to catalog deployed packages
-_LIST_PACKAGES_SQL = """\
+# SQL to catalog deployed packages (parameterised — see list_packages())
+_LIST_PACKAGES_BASE_SQL = """\
 SELECT
     f.name   AS folder_name,
     pj.name  AS project_name,
@@ -29,9 +29,6 @@ FROM [SSISDB].[catalog].[packages] pk
 JOIN [SSISDB].[catalog].[projects] pj ON pk.project_id = pj.project_id
 JOIN [SSISDB].[catalog].[folders]  f  ON pj.folder_id  = f.folder_id
 WHERE 1 = 1
-{folder_filter}
-{project_filter}
-ORDER BY f.name, pj.name, pk.name
 """
 
 # SQL to extract the .dtsx blob for a given package_id
@@ -85,15 +82,18 @@ class SSISDBExtractor:
         if not self._conn:
             raise RuntimeError("Not connected. Call connect() first.")
 
-        folder_filter = f"AND f.name = '{folder_name}'" if folder_name else ""
-        project_filter = f"AND pj.name = '{project_name}'" if project_name else ""
-        sql = _LIST_PACKAGES_SQL.format(
-            folder_filter=folder_filter,
-            project_filter=project_filter,
-        )
+        sql = _LIST_PACKAGES_BASE_SQL
+        params: list[str] = []
+        if folder_name:
+            sql += "AND f.name = ?\n"
+            params.append(folder_name)
+        if project_name:
+            sql += "AND pj.name = ?\n"
+            params.append(project_name)
+        sql += "ORDER BY f.name, pj.name, pk.name\n"
 
         cursor = self._conn.cursor()
-        cursor.execute(sql)
+        cursor.execute(sql, params)
         rows = cursor.fetchall()
         cursor.close()
 

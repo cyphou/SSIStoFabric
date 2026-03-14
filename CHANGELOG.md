@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.0] - 2026-03-14
+
+### ✨ Phase 6 — Fidelity & Scale
+
+#### Security
+- **SQL injection in `SSISDBExtractor.list_packages()`** — f-string interpolation replaced with parameterised queries (`cursor.execute(sql, params)`)
+
+#### Code Quality
+- **Shared generator utilities** (`engine/utils.py`) — extracted `sanitize_name()`, `is_source()`, `is_destination()`, `is_transform()`, `filter_error_columns()`, `SOURCE_COMPONENT_TYPES`, `DEST_COMPONENT_TYPES` from 3 generators to eliminate duplication
+- Generators now delegate to `engine/utils.py` via thin wrappers
+
+#### Performance
+- **Assessment O(N) fix** — `assess()` now calls `create_plan()` once for all packages, then indexes by package name. Previously called it N+1 times (once per package + once per `_assess_package`)
+
+#### Bug Fixes
+- **Incremental mode selective cleanup** — `shutil.rmtree` no longer deletes all output in incremental mode. Only artifacts for changed packages are cleaned; unchanged packages' outputs are preserved. Fixed in both `MigrationEngine.execute()` and `AgentOrchestrator.run()`
+
+#### Features
+- **DAG-aware Spark generation** — when `DataFlowPath` routing is available (multicast, conditional split), the Spark generator now produces code in topological order following the actual data flow DAG instead of assuming linear source→transform→dest flow
+- **Unified expression transpiler** (`engine/expression_transpiler.py`) — single `ExpressionTranspiler` class with `to_pyspark()` and `to_m()` methods for clean access to both transpilers
+- **New SSIS functions**: `CODEPOINT()` and `TOKENCOUNT()` in PySpark; `CODEPOINT()`, `TOKENCOUNT()`, `HEX()` in Power Query M
+
+#### CI/CD
+- **Python 3.13** — added classifier and Azure DevOps pipeline matrix strategy (3.10, 3.11, 3.12, 3.13)
+- Removed stale `build/` directory from tracking
+
+#### Tests
+- **58 new tests** (748 → 806) in `tests/unit/test_phase6_features.py`:
+  - `TestSharedUtils` (7) — sanitize_name, is_source/dest/transform, filter_error_columns
+  - `TestLineageGraph` (10) — build, impact, Mermaid, SQL extraction, JSON export
+  - `TestReportGenerator` (5) — HTML generation, errors, edge cases, escaping
+  - `TestFabricDeployer` (14) — auth, API retry, delete, deployment report, connections, folders
+  - `TestExpressionTranspiler` (12) — new functions, unified facade, DT casts
+  - `TestDAGAwareSpark` (3) — linear fallback, multicast, transform chains
+  - `TestIncrementalCleanup` (2) — selective vs full cleanup
+  - `TestSSISDBExtractorSQL` (4) — parameterised queries, injection safety
+  - `TestAssessPerformance` (1) — verify single plan creation
+
+---
+
 ## [1.3.0] - 2026-03-14
 
 ### ✨ Phase 5 — Quality & Completeness

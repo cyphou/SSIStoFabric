@@ -20,6 +20,12 @@ from ssis_to_fabric.analyzer.models import (
     SSISPackage,
     TaskType,
 )
+from ssis_to_fabric.engine.utils import (
+    is_destination,
+    is_source,
+    is_transform,
+    sanitize_name,
+)
 from ssis_to_fabric.logging_config import get_logger
 
 if TYPE_CHECKING:
@@ -262,15 +268,24 @@ class SparkNotebookGenerator:
         return "\n".join(lines)
 
     def _generate_data_flow_code(self, task: ControlFlowTask, package: SSISPackage) -> list[str]:
-        """Generate PySpark code for a Data Flow task."""
-        code_sections = []
+        """Generate PySpark code for a Data Flow task.
+
+        When ``task.data_flow_paths`` is populated, uses them to build a
+        DAG-aware code flow that correctly handles multicast, conditional
+        split, and other branching patterns.  Falls back to a linear
+        chain when path information is absent.
+        """
+        code_sections: list[str] = []
 
         # Group components by type
         sources = [c for c in task.data_flow_components if self._is_source(c)]
         transforms = [c for c in task.data_flow_components if self._is_transform(c)]
         destinations = [c for c in task.data_flow_components if self._is_destination(c)]
 
-        # Generate source reads
+        # Build component name → object lookup
+        comp_map = {c.name: c for c in task.data_flow_components}
+
+        # --- Generate source reads ---
         source_var_names: list[str] = []
         if sources:
             code_sections.append("# === Source Data Reads ===")
@@ -279,24 +294,117 @@ class SparkNotebookGenerator:
                 source_var_names.append(var_name)
                 code_sections.append(self._generate_source_read(src, i))
 
-        # Bridge: assign the primary source to 'df' for transformations/writes
-        if source_var_names:
-            primary = source_var_names[0]
-            code_sections.append(f"df = {primary}")
+        # --- DAG-aware generation when paths are available ---
+        if task.data_flow_paths and len(task.data_flow_paths) > 1:
+            code_sections.append("# === DAG-aware Data Flow ===")
+            code_sections.extend(
+                self._generate_dag_flow(task, comp_map, source_var_names, package)
+            )
+        else:
+            # Linear fallback
+            if source_var_names:
+                primary = source_var_names[0]
+                code_sections.append(f"df = {primary}")
 
-        # Generate transformations
-        if transforms:
-            code_sections.append("# === Transformations ===")
-            for transform in transforms:
-                code_sections.append(self._generate_transformation(transform))
+            if transforms:
+                code_sections.append("# === Transformations ===")
+                for transform in transforms:
+                    code_sections.append(self._generate_transformation(transform))
 
-        # Generate destination writes
-        if destinations:
-            code_sections.append("# === Destination Writes ===")
-            for dest in destinations:
-                code_sections.append(self._generate_destination_write(dest, package))
+            if destinations:
+                code_sections.append("# === Destination Writes ===")
+                for dest in destinations:
+                    code_sections.append(self._generate_destination_write(dest, package))
 
         return code_sections
+
+    # -----------------------------------------------------------------
+    # DAG-aware helpers
+    # -----------------------------------------------------------------
+
+    def _generate_dag_flow(
+        self,
+        task: ControlFlowTask,
+        comp_map: dict[str, DataFlowComponent],
+        source_var_names: list[str],
+        package: SSISPackage,
+    ) -> list[str]:
+        """Walk ``DataFlowPath`` edges and emit code respecting the DAG topology."""
+        from collections import defaultdict
+
+        code: list[str] = []
+
+        # Build adjacency: source_comp → [(dest_comp, output_name), …]
+        adj: dict[str, list[tuple[str, str]]] = defaultdict(list)
+        for path in task.data_flow_paths:
+            adj[path.source_component].append(
+                (path.destination_component, path.source_output)
+            )
+
+        # Map component name → DataFrame variable name
+        var_map: dict[str, str] = {}
+        for c in task.data_flow_components:
+            if self._is_source(c):
+                var_map[c.name] = f"df_source_{self._sanitize_name(c.name).lower()}"
+
+        # Topological order via BFS from sources
+        from collections import deque
+
+        in_degree: dict[str, int] = defaultdict(int)
+        for path in task.data_flow_paths:
+            in_degree[path.destination_component] += 1
+        # Ensure all components listed
+        for c in task.data_flow_components:
+            in_degree.setdefault(c.name, 0)
+
+        queue: deque[str] = deque()
+        for c in task.data_flow_components:
+            if in_degree[c.name] == 0:
+                queue.append(c.name)
+
+        visited_order: list[str] = []
+        while queue:
+            node = queue.popleft()
+            visited_order.append(node)
+            for dst, _ in adj.get(node, []):
+                in_degree[dst] -= 1
+                if in_degree[dst] == 0:
+                    queue.append(dst)
+
+        # Generate code in topological order (skip sources — already emitted)
+        for comp_name in visited_order:
+            comp = comp_map.get(comp_name)
+            if comp is None:
+                continue
+
+            if self._is_source(comp):
+                continue
+
+            # Determine the input variable(s) for this component
+            parents = [
+                p.source_component
+                for p in task.data_flow_paths
+                if p.destination_component == comp_name
+            ]
+            if parents and parents[0] in var_map:
+                input_var = var_map[parents[0]]
+            elif source_var_names:
+                input_var = source_var_names[0]
+            else:
+                input_var = "df"
+
+            out_var = f"df_{self._sanitize_name(comp_name).lower()}"
+            var_map[comp_name] = out_var
+
+            if self._is_transform(comp):
+                code.append(f"df = {input_var}")
+                code.append(self._generate_transformation(comp))
+                code.append(f"{out_var} = df")
+            elif self._is_destination(comp):
+                code.append(f"df = {input_var}")
+                code.append(self._generate_destination_write(comp, package))
+
+        return code
 
     def _generate_source_read(self, comp: DataFlowComponent, index: int) -> str:
         """Generate PySpark code to read from a source.
@@ -1217,34 +1325,15 @@ class SparkNotebookGenerator:
 
     @staticmethod
     def _is_source(comp: DataFlowComponent) -> bool:
-        return comp.component_type in {
-            DataFlowComponentType.OLE_DB_SOURCE,
-            DataFlowComponentType.ADO_NET_SOURCE,
-            DataFlowComponentType.FLAT_FILE_SOURCE,
-            DataFlowComponentType.EXCEL_SOURCE,
-            DataFlowComponentType.ODBC_SOURCE,
-            DataFlowComponentType.XML_SOURCE,
-            DataFlowComponentType.RAW_FILE_SOURCE,
-            DataFlowComponentType.CDC_SOURCE,
-        }
+        return is_source(comp)
 
     @staticmethod
     def _is_destination(comp: DataFlowComponent) -> bool:
-        return comp.component_type in {
-            DataFlowComponentType.OLE_DB_DESTINATION,
-            DataFlowComponentType.ADO_NET_DESTINATION,
-            DataFlowComponentType.FLAT_FILE_DESTINATION,
-            DataFlowComponentType.EXCEL_DESTINATION,
-            DataFlowComponentType.ODBC_DESTINATION,
-            DataFlowComponentType.RAW_FILE_DESTINATION,
-            DataFlowComponentType.RECORDSET_DESTINATION,
-            DataFlowComponentType.SQL_SERVER_DESTINATION,
-            DataFlowComponentType.DATA_READER_DESTINATION,
-        }
+        return is_destination(comp)
 
     @staticmethod
     def _is_transform(comp: DataFlowComponent) -> bool:
-        return not (SparkNotebookGenerator._is_source(comp) or SparkNotebookGenerator._is_destination(comp))
+        return is_transform(comp)
 
     @staticmethod
     def _ssis_expr_to_pyspark(expr: str) -> str:
@@ -1439,6 +1528,21 @@ class SparkNotebookGenerator:
         if m:
             return f'F.reverse(F.col("{m.group(1)}"))'
 
+        # CODEPOINT(col) → ascii value of first char
+        m = _re.match(r"^CODEPOINT\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
+        if m:
+            return f'F.ascii(F.col("{m.group(1)}"))'
+
+        # TOKENCOUNT(col, delimiters) → count of tokens
+        m = _re.match(
+            r'^TOKENCOUNT\s*\(\s*(\w+)\s*,\s*"([^"]*)"\s*\)$',
+            result, _re.IGNORECASE,
+        )
+        if m:
+            col, delim = m.group(1), m.group(2)
+            escaped_delim = _re.escape(delim)
+            return f'F.size(F.split(F.col("{col}"), "[{escaped_delim}]"))'
+
         # REPLACE(col, old, new)
         m = _re.match(r'^REPLACE\s*\(\s*(\w+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\)$', result, _re.IGNORECASE)
         if m:
@@ -1628,8 +1732,4 @@ class SparkNotebookGenerator:
 
     @staticmethod
     def _sanitize_name(name: str) -> str:
-        import re
-
-        sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-        sanitized = re.sub(r"_+", "_", sanitized)
-        return sanitized.strip("_")[:200]
+        return sanitize_name(name, max_length=200)

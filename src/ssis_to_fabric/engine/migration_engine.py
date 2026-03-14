@@ -347,10 +347,25 @@ class MigrationEngine:
         # Clean previous output to prevent stale artifacts from prior runs
         import shutil
 
-        for subdir in ("pipelines", "notebooks", "dataflows", "connections"):
-            target = output_dir / subdir
-            if target.exists():
-                shutil.rmtree(target)
+        if incremental:
+            # In incremental mode, only remove artifacts for changed packages
+            from ssis_to_fabric.engine.utils import sanitize_name as _sanitize
+
+            for subdir in ("pipelines", "notebooks", "dataflows"):
+                target = output_dir / subdir
+                if not target.exists():
+                    continue
+                for f in target.iterdir():
+                    if any(f.stem.startswith(_sanitize(cp)) for cp in changed_packages):
+                        if f.is_file():
+                            f.unlink()
+                        elif f.is_dir():
+                            shutil.rmtree(f)
+        else:
+            for subdir in ("pipelines", "notebooks", "dataflows", "connections"):
+                target = output_dir / subdir
+                if target.exists():
+                    shutil.rmtree(target)
 
         # Build a lookup of packages by name
         pkg_map = {pkg.name: pkg for pkg in packages}
@@ -595,21 +610,29 @@ class MigrationEngine:
         total_auto = 0
         total_items = 0
 
+        # Create plan once for all packages (O(N) instead of O(N^2))
+        full_plan = self.create_plan(packages)
+
+        # Index plan items by package name
+        plan_items_by_pkg: dict[str, list[MigrationItem]] = {}
+        for item in full_plan.items:
+            plan_items_by_pkg.setdefault(item.source_package, []).append(item)
+
         for pkg in packages:
-            pkg_assessment = self._assess_package(pkg)
+            pkg_items = plan_items_by_pkg.get(pkg.name, [])
+            pkg_assessment = self._assess_package(pkg, pkg_items)
             report.packages.append(pkg_assessment)
             report.total_tasks += pkg_assessment.tasks
             report.total_data_flows += pkg_assessment.data_flows
             report.estimated_total_hours += pkg_assessment.estimated_hours
 
             # Track automatable items
-            plan = self.create_plan([pkg])
             auto = sum(
-                1 for item in plan.items
+                1 for item in pkg_items
                 if item.target_artifact != TargetArtifact.MANUAL_REVIEW
             )
             total_auto += auto
-            total_items += len(plan.items)
+            total_items += len(pkg_items)
 
             # Collect connections
             for cm in pkg.connection_managers:
@@ -640,7 +663,7 @@ class MigrationEngine:
         )
         return report
 
-    def _assess_package(self, package: SSISPackage) -> PackageAssessment:
+    def _assess_package(self, package: SSISPackage, plan_items: list[MigrationItem]) -> PackageAssessment:
         """Assess a single SSIS package."""
         risks: list[str] = []
         unsupported: list[str] = []
@@ -672,10 +695,9 @@ class MigrationEngine:
         for task in package.control_flow_tasks:
             effort += self._estimate_task_effort(task)
 
-        # Auto-migrate percentage
-        plan = self.create_plan([package])
-        auto = sum(1 for i in plan.items if i.target_artifact != TargetArtifact.MANUAL_REVIEW)
-        auto_pct = (auto / max(len(plan.items), 1)) * 100
+        # Auto-migrate percentage from pre-computed plan items
+        auto = sum(1 for i in plan_items if i.target_artifact != TargetArtifact.MANUAL_REVIEW)
+        auto_pct = (auto / max(len(plan_items), 1)) * 100
 
         return PackageAssessment(
             name=package.name,

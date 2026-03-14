@@ -21,9 +21,6 @@ pr:
 pool:
   vmImage: 'ubuntu-latest'
 
-variables:
-  pythonVersion: '3.11'
-
 stages:
 
   # ===========================
@@ -34,6 +31,16 @@ stages:
     jobs:
       - job: Test
         displayName: 'Run Tests'
+        strategy:
+          matrix:
+            Python310:
+              pythonVersion: '3.10'
+            Python311:
+              pythonVersion: '3.11'
+            Python312:
+              pythonVersion: '3.12'
+            Python313:
+              pythonVersion: '3.13'
         steps:
           - task: UsePythonVersion@0
             inputs:

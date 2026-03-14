@@ -454,10 +454,24 @@ class AgentOrchestrator:
         # Clean previous output
         import shutil
 
-        for subdir in ("pipelines", "notebooks", "dataflows", "connections"):
-            target = output_dir / subdir
-            if target.exists():
-                shutil.rmtree(target)
+        if incremental:
+            from ssis_to_fabric.engine.utils import sanitize_name as _sanitize
+
+            for subdir in ("pipelines", "notebooks", "dataflows"):
+                target = output_dir / subdir
+                if not target.exists():
+                    continue
+                for f in target.iterdir():
+                    if any(f.stem.startswith(_sanitize(cp)) for cp in changed_packages):
+                        if f.is_file():
+                            f.unlink()
+                        elif f.is_dir():
+                            shutil.rmtree(f)
+        else:
+            for subdir in ("pipelines", "notebooks", "dataflows", "connections"):
+                target = output_dir / subdir
+                if target.exists():
+                    shutil.rmtree(target)
 
         pkg_map = {pkg.name: pkg for pkg in packages}
 

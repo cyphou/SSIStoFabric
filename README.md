@@ -12,10 +12,10 @@
 
 <p align="center">
   <a href="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml"><img src="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-  <img src="https://img.shields.io/badge/tests-708%20passed-brightgreen?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-806%20passed-brightgreen?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"/>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"/>
-  <img src="https://img.shields.io/badge/version-1.3.0-blue?style=flat-square" alt="Version"/>
+  <img src="https://img.shields.io/badge/version-1.4.0-blue?style=flat-square" alt="Version"/>
   <img src="https://img.shields.io/badge/pipelines-28-orange?style=flat-square" alt="Pipelines"/>
   <img src="https://img.shields.io/badge/notebooks-28-orange?style=flat-square" alt="Notebooks"/>
 </p>
@@ -224,7 +224,7 @@ SSISToFabric/
 │   ├── api.py                          # Public Python API (SSISMigrator facade)
 │   ├── config.py                       # Configuration management
 │   └── logging_config.py              # Structured logging (structlog)
-├── tests/                              # 708 tests across unit + regression
+├── tests/                              # 806 tests across unit + regression
 ├── examples/                           # 12 scenarios + full SSIS project (28 packages)
 ├── azure-pipelines.yml                 # Azure DevOps CI/CD
 ├── .github/workflows/ci.yml           # GitHub Actions CI/CD
@@ -583,13 +583,13 @@ ssis2fabric extract-ssisdb "<conn-str>" --folder MyFolder --project MyProject
 ## 🧪 Testing
 
 <p align="center">
-  <img src="https://img.shields.io/badge/tests-708%20passed-brightgreen?style=for-the-badge" alt="Tests"/>
-  <img src="https://img.shields.io/badge/unit%20tests-694-blue?style=for-the-badge" alt="Unit Tests"/>
+  <img src="https://img.shields.io/badge/tests-806%20passed-brightgreen?style=for-the-badge" alt="Tests"/>
+  <img src="https://img.shields.io/badge/unit%20tests-792-blue?style=for-the-badge" alt="Unit Tests"/>
   <img src="https://img.shields.io/badge/regression-14-blue?style=for-the-badge" alt="Regression Tests"/>
 </p>
 
 ```bash
-pytest tests/ -v                                     # Run all 708+ tests
+pytest tests/ -v                                     # Run all 806+ tests
 pytest tests/unit/ -v                                # Unit tests only
 pytest tests/unit/test_api.py -v                     # API facade tests
 pytest tests/unit/test_automation_features.py -v     # Expression transpiler tests
@@ -621,7 +621,7 @@ pytest tests/ --cov=ssis_to_fabric --cov-report=html # Coverage report
 
 ```mermaid
 flowchart LR
-    L["🔍 Lint\nruff + mypy"] --> T["🧪 Test\n708 tests\nPy 3.10–3.12"]
+    L["🔍 Lint\nruff + mypy"] --> T["🧪 Test\n806 tests\nPy 3.10–3.13"]
     T --> R["✅ Regression\nBaseline\nvalidation"]
     R --> D["📦 Dry Run\nSample migration"]
     D --> P["🚀 Deploy\nFabric workspace"]

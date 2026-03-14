@@ -30,6 +30,7 @@ from ssis_to_fabric.analyzer.models import (
     SSISPackage,
     TaskType,
 )
+from ssis_to_fabric.engine.utils import DEST_COMPONENT_TYPES, SOURCE_COMPONENT_TYPES, sanitize_name
 from ssis_to_fabric.logging_config import get_logger
 
 if TYPE_CHECKING:
@@ -586,32 +587,10 @@ class DataFactoryGenerator:
         source_comp = None
         dest_comp = None
 
-        source_types = {
-            DataFlowComponentType.OLE_DB_SOURCE,
-            DataFlowComponentType.ADO_NET_SOURCE,
-            DataFlowComponentType.FLAT_FILE_SOURCE,
-            DataFlowComponentType.EXCEL_SOURCE,
-            DataFlowComponentType.ODBC_SOURCE,
-            DataFlowComponentType.XML_SOURCE,
-            DataFlowComponentType.RAW_FILE_SOURCE,
-            DataFlowComponentType.CDC_SOURCE,
-        }
-        dest_types = {
-            DataFlowComponentType.OLE_DB_DESTINATION,
-            DataFlowComponentType.ADO_NET_DESTINATION,
-            DataFlowComponentType.FLAT_FILE_DESTINATION,
-            DataFlowComponentType.EXCEL_DESTINATION,
-            DataFlowComponentType.ODBC_DESTINATION,
-            DataFlowComponentType.RAW_FILE_DESTINATION,
-            DataFlowComponentType.RECORDSET_DESTINATION,
-            DataFlowComponentType.SQL_SERVER_DESTINATION,
-            DataFlowComponentType.DATA_READER_DESTINATION,
-        }
-
         for comp in task.data_flow_components:
-            if comp.component_type in source_types:
+            if comp.component_type in SOURCE_COMPONENT_TYPES:
                 source_comp = comp
-            elif comp.component_type in dest_types:
+            elif comp.component_type in DEST_COMPONENT_TYPES:
                 dest_comp = comp
 
         activity: dict[str, Any] = {
@@ -1406,8 +1385,4 @@ class DataFactoryGenerator:
     @staticmethod
     def _sanitize_name(name: str) -> str:
         """Sanitize a name for use in Data Factory."""
-        import re
-
-        sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-        sanitized = re.sub(r"_+", "_", sanitized)
-        return sanitized.strip("_")[:260]
+        return sanitize_name(name)

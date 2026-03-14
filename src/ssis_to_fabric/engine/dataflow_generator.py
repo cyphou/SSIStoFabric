@@ -19,7 +19,6 @@ Dataflow Gen2 supports:
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +30,13 @@ from ssis_to_fabric.analyzer.models import (
     DataFlowComponentType,
     SSISPackage,
     TaskType,
+)
+from ssis_to_fabric.engine.utils import (
+    filter_error_columns,
+    is_destination,
+    is_source,
+    is_transform,
+    sanitize_name,
 )
 from ssis_to_fabric.logging_config import get_logger
 
@@ -804,6 +810,12 @@ class DataflowGen2Generator:
                 if func_name == "TOKEN" and len(args) >= 2:
                     occ = _conv(args[2]) if len(args) >= 3 else "1"
                     return f"List.ItemAt(Text.Split({_conv(args[0])}, {_conv(args[1])}), {occ} - 1){tail}"
+                if func_name == "TOKENCOUNT" and len(args) == 2:
+                    return f"List.Count(Text.Split({_conv(args[0])}, {_conv(args[1])}))"
+                if func_name == "CODEPOINT" and len(args) == 1:
+                    return f"Character.ToNumber(Text.At({_conv(args[0])}, 0)){tail}"
+                if func_name == "HEX" and len(args) == 1:
+                    return f"Number.ToText({_conv(args[0])}, \"X\"){tail}"
                 if func_name == "REPLACENULL" and len(args) == 2:
                     col = _conv(args[0])
                     val = _conv(args[1])
@@ -959,51 +971,20 @@ class DataflowGen2Generator:
 
     @staticmethod
     def _is_source(comp: DataFlowComponent) -> bool:
-        return comp.component_type in {
-            DataFlowComponentType.OLE_DB_SOURCE,
-            DataFlowComponentType.ADO_NET_SOURCE,
-            DataFlowComponentType.FLAT_FILE_SOURCE,
-            DataFlowComponentType.EXCEL_SOURCE,
-            DataFlowComponentType.ODBC_SOURCE,
-            DataFlowComponentType.XML_SOURCE,
-            DataFlowComponentType.RAW_FILE_SOURCE,
-            DataFlowComponentType.CDC_SOURCE,
-        }
+        return is_source(comp)
 
     @staticmethod
     def _is_destination(comp: DataFlowComponent) -> bool:
-        return comp.component_type in {
-            DataFlowComponentType.OLE_DB_DESTINATION,
-            DataFlowComponentType.ADO_NET_DESTINATION,
-            DataFlowComponentType.FLAT_FILE_DESTINATION,
-            DataFlowComponentType.EXCEL_DESTINATION,
-            DataFlowComponentType.ODBC_DESTINATION,
-            DataFlowComponentType.RAW_FILE_DESTINATION,
-            DataFlowComponentType.RECORDSET_DESTINATION,
-            DataFlowComponentType.SQL_SERVER_DESTINATION,
-            DataFlowComponentType.DATA_READER_DESTINATION,
-        }
+        return is_destination(comp)
 
     @staticmethod
     def _is_transform(comp: DataFlowComponent) -> bool:
-        return not (
-            DataflowGen2Generator._is_source(comp)
-            or DataflowGen2Generator._is_destination(comp)
-            or comp.component_type == DataFlowComponentType.SCRIPT_COMPONENT
-        )
+        return is_transform(comp) and comp.component_type != DataFlowComponentType.SCRIPT_COMPONENT
 
     @staticmethod
     def _sanitize_name(name: str) -> str:
-        sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-        sanitized = re.sub(r"_+", "_", sanitized)
-        return sanitized.strip("_")[:260]
+        return sanitize_name(name)
 
     @staticmethod
     def _filter_error_columns(columns: list[Any]) -> list[Any]:
-        """Remove SSIS error-output columns (ErrorCode, ErrorColumn, empty name).
-
-        These columns belong to the SSIS error output path and should not
-        appear in the Power Query M code.
-        """
-        _error_names = {"ErrorCode", "ErrorColumn", ""}
-        return [c for c in columns if c.name not in _error_names]
+        return filter_error_columns(columns)
