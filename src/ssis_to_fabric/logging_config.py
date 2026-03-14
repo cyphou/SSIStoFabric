@@ -5,7 +5,9 @@ Provides consistent, production-ready JSON or console logging.
 
 from __future__ import annotations
 
+import logging
 import sys
+from typing import Any
 
 import structlog
 
@@ -28,6 +30,7 @@ def setup_logging(level: str = "INFO", log_format: str = "json", log_file: str |
         structlog.processors.UnicodeDecoder(),
     ]
 
+    renderer: Any
     if log_format == "json":
         renderer = structlog.processors.JSONRenderer()
     else:
@@ -35,15 +38,13 @@ def setup_logging(level: str = "INFO", log_format: str = "json", log_file: str |
 
     structlog.configure(
         processors=[
-            *shared_processors,
+            *shared_processors,  # type: ignore[list-item]
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=True,
     )
-
-    import logging
 
     formatter = structlog.stdlib.ProcessorFormatter(
         processors=[
@@ -55,7 +56,7 @@ def setup_logging(level: str = "INFO", log_format: str = "json", log_file: str |
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
 
-    handlers = [handler]
+    handlers: list[logging.Handler] = [handler]
 
     if log_file:
         file_handler = logging.FileHandler(log_file)
@@ -71,4 +72,4 @@ def setup_logging(level: str = "INFO", log_format: str = "json", log_file: str |
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     """Get a structured logger instance."""
-    return structlog.get_logger(name)
+    return structlog.get_logger(name)  # type: ignore[no-any-return]

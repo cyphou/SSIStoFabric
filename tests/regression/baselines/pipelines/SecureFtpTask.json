@@ -1,0 +1,53 @@
+{
+  "name": "SecureFtpTask",
+  "properties": {
+    "activities": [
+      {
+        "name": "Download_Files",
+        "type": "Wait",
+        "typeProperties": {
+          "waitTimeInSeconds": 1
+        },
+        "description": "TODO: Manual migration required. Original SSIS task type: UNKNOWN. Description: Secure FTP Task"
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ],
+    "parameters": {
+      "HostName": {
+        "type": "String",
+        "defaultValue": "test.rebex.net"
+      },
+      "HostPortNumber": {
+        "type": "String",
+        "defaultValue": "22"
+      },
+      "LocalPath": {
+        "type": "String",
+        "defaultValue": "C:\\SSIS2016Cookbook\\Chapter10\\Files"
+      },
+      "Password": {
+        "type": "String",
+        "defaultValue": "password"
+      },
+      "ProtocolName": {
+        "type": "String",
+        "defaultValue": "Sftp"
+      },
+      "RemotePath": {
+        "type": "String",
+        "defaultValue": "/pub/example/"
+      },
+      "SshHostKeyFingerPrint": {
+        "type": "String",
+        "defaultValue": "ssh-rsa 2048 03:61:c4:98:f1:ff:7d:23:97:51:07:13:88:b8:c5:55"
+      },
+      "UserName": {
+        "type": "String",
+        "defaultValue": "demo"
+      }
+    }
+  }
+}

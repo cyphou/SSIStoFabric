@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.0] - 2026-03-14
+
+### ✨ Phase 5 — Quality & Completeness
+
+#### Event Handler Migration
+- **SSIS `OnError` event handlers** are now converted to pipeline failure-path activities with `dependsOn: ["Failed"]` conditions wired to all top-level activities
+- **Other event handlers** (`OnPreExecute`, `OnPostExecute`, `OnWarning`, etc.) emit placeholder Wait activities with TODO comments for manual review
+- Event handler activities are automatically included in consolidated package pipelines
+
+#### Pre-Migration Assessment
+- **`ssis2fabric assess <path>`** CLI command — produces a readiness score (0–100), per-package effort estimates (person-hours), risk flags, unsupported component list, and connection inventory
+- **`MigrationEngine.assess()`** method — programmatic API for pre-migration assessment
+- **`SSISMigrator.assess()`** facade method — one-call assessment via the public API
+- **`AssessmentReport` / `PackageAssessment`** data models with `to_dict()` serialization
+- Effort estimation uses weighted scoring: LOW=0.5h, MEDIUM=2h, HIGH=8h, MANUAL=16h per task
+- Risk flags for Script Tasks, Script Components, non-OnError event handlers, and partial-parse packages
+
+#### Config Validation
+- **`ssis2fabric validate-config`** CLI command — validates the loaded configuration, checks UUID format in connection mappings, verifies output directory writability, and reports warnings for missing workspace IDs
+
+#### Migrate Dry-Run
+- **`ssis2fabric migrate --dry-run`** flag — shows the migration plan (packages, tasks, targets, complexity) without generating any files
+
+#### Bug Fixes (from bug bash)
+- **C# `IsNullOrWhiteSpace` transpilation** — fixed logic error (`or` → `and`) that gave wrong results for whitespace-only strings
+- **C# `.Contains()` / `.ContainsKey()` transpilation** — fixed reversed operand order (`x.Contains(y)` → `y in x`)
+- **C# File I/O resource leaks** — transpiled `open(x).read()` patterns now use `Path(x).read_text()` to avoid leaked file handles
+- **Path traversal in SSISDB extractor** — folder/project names from SSISDB are now validated against directory traversal attacks
+- **SQL injection in regression runner** — table names and column names are now bracket-escaped in SQL queries
+
+#### Tests
+- **40 new tests** (708 → 748) in `tests/unit/test_phase5_features.py` covering event handler conversion, assessment scoring, CLI commands, and API facade
+
+#### Documentation
+- README badges updated to v1.3.0 / 748 tests
+- New CLI commands documented: `assess`, `validate-config`, `migrate --dry-run`
+
+---
+
 ## [1.2.0] - 2026-03-14
 
 ### ✨ Phase 1 — Hardening

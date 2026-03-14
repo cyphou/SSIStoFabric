@@ -1,0 +1,38 @@
+{
+  "destinations": [
+    {
+      "table": "ole_dst_Staging_StgCustomerAddress",
+      "connectionRef": "cmgr_DW",
+      "columns": [
+        {
+          "name": "ModifiedDate",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "AddressID",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        }
+      ]
+    }
+  ]
+}

@@ -41,7 +41,7 @@ _LINE_RULES: list[tuple[Any, ...]] = [
     # --- String interpolation: $"Hello {name}" → f"Hello {name}" ---
     (r'\$"', 'f"', 0),
     # --- Common type declarations ---
-    (r"\bstring\b", "str", 0),
+    (r"\bstring\b(?!\.)", "str", 0),
     (r"\bint\b(?!\s*\()", "int", 0),
     (r"\bbool\b", "bool", 0),
     (r"\bdouble\b", "float", 0),
@@ -73,18 +73,25 @@ _LINE_RULES: list[tuple[Any, ...]] = [
     (r"\.Trim\(\)", ".strip()", 0),
     (r"\.TrimStart\(\)", ".lstrip()", 0),
     (r"\.TrimEnd\(\)", ".rstrip()", 0),
-    (r"\.Contains\(([^)]+)\)", r" in \1", 0),
+    (r"(\w[\w.]*)?\.Contains\(([^)]+)\)", r"\2 in \1", 0),
     (r"\.StartsWith\(([^)]+)\)", r".startswith(\1)", 0),
     (r"\.EndsWith\(([^)]+)\)", r".endswith(\1)", 0),
+    # --- Regex (before generic .Replace/.Split so Regex.Replace is caught first) ---
+    (r"Regex\.IsMatch\(([^,]+),\s*([^)]+)\)", r"bool(re.search(\2, \1))", 0),
+    (r"Regex\.Match\(([^,]+),\s*([^)]+)\)", r"re.search(\2, \1)", 0),
+    (r"Regex\.Replace\(([^,]+),\s*([^,]+),\s*([^)]+)\)", r"re.sub(\2, \3, \1)", 0),
+    (r"Regex\.Split\(([^,]+),\s*([^)]+)\)", r"re.split(\2, \1)", 0),
+    (r"new Regex\(([^)]+)\)", r"re.compile(\1)", 0),
+    # --- String methods (after regex to avoid clobbering Regex.Replace) ---
     (r"\.Replace\(([^,]+),\s*([^)]+)\)", r".replace(\1, \2)", 0),
     (r"\.Split\(([^)]+)\)", r".split(\1)", 0),
     (r"\.Substring\((\d+),\s*(\d+)\)", r"[\1:\1+\2]", 0),
     (r"\.Length\b", r"len(___PLACEHOLDER___)", 0),  # handled separately
     (r"string\.IsNullOrEmpty\(([^)]+)\)", r"not \1", 0),
-    (r"string\.IsNullOrWhiteSpace\(([^)]+)\)", r"not (\1 or \1.strip())", 0),
+    (r"string\.IsNullOrWhiteSpace\(([^)]+)\)", r"not (\1 and \1.strip())", 0),
     # --- File I/O ---
-    (r"File\.ReadAllText\(([^)]+)\)", r"open(\1).read()", 0),
-    (r"File\.WriteAllText\(([^,]+),\s*([^)]+)\)", r"open(\1, 'w').write(\2)", 0),
+    (r"File\.ReadAllText\(([^)]+)\)", r"Path(\1).read_text()", 0),
+    (r"File\.WriteAllText\(([^,]+),\s*([^)]+)\)", r"Path(\1).write_text(\2)", 0),
     (r"File\.Exists\(([^)]+)\)", r"os.path.exists(\1)", 0),
     (r"File\.Delete\(([^)]+)\)", r"os.remove(\1)", 0),
     # --- SQL ---
@@ -106,6 +113,82 @@ _LINE_RULES: list[tuple[Any, ...]] = [
     # --- Control flow ---
     (r"\bforeach\s*\(.*?\bin\s+", r"for _item in ", 0),
     (r"\bfor\s*\(int\s+(\w+)\s*=\s*(\d+);\s*\1\s*<\s*([^;]+);\s*\1\+\+\s*\)", r"for \1 in range(\2, \3):", 0),
+    (r"\bwhile\s*\(([^)]+)\)\s*\{?", r"while \1:", 0),
+    (r"\belse if\s*\(([^)]+)\)\s*\{?", r"elif \1:", 0),
+    (r"\bif\s*\(([^)]+)\)\s*\{?", r"if \1:", 0),
+    (r"\belse\b(?!\s*if)\s*\{?", r"else:", 0),
+    (r"\breturn\s+", "return ", 0),
+    (r"\bnew\s+List<[^>]+>\(\)", "[]", 0),
+    (r"\bnew\s+Dictionary<[^>]+>\(\)", "{}", 0),
+    # --- Collections ---
+    (r"\.Add\(([^)]+)\)", r".append(\1)", 0),
+    (r"\.AddRange\(([^)]+)\)", r".extend(\1)", 0),
+    (r"\.Remove\(([^)]+)\)", r".remove(\1)", 0),
+    (r"\.Count\b", r".__len__()", 0),  # len() handled via post-processing
+    (r"\.Clear\(\)", ".clear()", 0),
+    (r"(\w[\w.]*)?\.ContainsKey\(([^)]+)\)", r"\2 in \1", 0),
+    # --- StringBuilder ---
+    (r"new StringBuilder\(\)", '""', 0),
+    (r"new StringBuilder\(([^)]+)\)", r"str(\1)", 0),
+    (r"\.Append\(([^)]+)\)", r" += str(\1)", 0),
+    (r"\.AppendLine\(([^)]+)\)", r' += str(\1) + "\\n"', 0),
+    (r"\.AppendLine\(\)", r' += "\\n"', 0),
+    # --- DataTable / DataRow ---
+    (r"new DataTable\(\)", "[]  # DataTable → list of dicts", 0),
+    (r"(\w+)\.Rows\.Add\(([^)]+)\)", r"\1.append(\2)", 0),
+    (r'(\w+)\.Rows\[(\d+)\]\["([^"]+)"\]', r"\1[\2]['\3']", 0),
+    (r'(\w+)\["([^"]+)"\]', r"\1['\2']", 0),
+    (r"\.Rows\.Count\b", ".__len__()", 0),
+    # --- File I/O extended ---
+    (r"File\.ReadAllLines\(([^)]+)\)", r"Path(\1).read_text().splitlines()", 0),
+    (r"File\.WriteAllLines\(([^,]+),\s*([^)]+)\)", r"Path(\1).write_text('\\n'.join(\2))", 0),
+    (r"File\.AppendAllText\(([^,]+),\s*([^)]+)\)", r"Path(\1).open('a').write(\2)  # TODO: use context manager", 0),
+    (r"File\.Copy\(([^,]+),\s*([^)]+)\)", r"shutil.copy(\1, \2)", 0),
+    (r"File\.Move\(([^,]+),\s*([^)]+)\)", r"shutil.move(\1, \2)", 0),
+    (r"Directory\.CreateDirectory\(([^)]+)\)", r"os.makedirs(\1, exist_ok=True)", 0),
+    (r"Directory\.Exists\(([^)]+)\)", r"os.path.isdir(\1)", 0),
+    (r"Directory\.GetFiles\(([^)]+)\)", r"os.listdir(\1)", 0),
+    (r"Path\.Combine\(([^)]+)\)", r"os.path.join(\1)", 0),
+    (r"Path\.GetFileName\(([^)]+)\)", r"os.path.basename(\1)", 0),
+    (r"Path\.GetDirectoryName\(([^)]+)\)", r"os.path.dirname(\1)", 0),
+    (r"Path\.GetExtension\(([^)]+)\)", r"os.path.splitext(\1)[1]", 0),
+    # --- Stream patterns ---
+    (
+        r"new StreamWriter\(([^)]+)\)",
+        r"open(\1, 'w')  # StreamWriter",
+        0,
+    ),
+    (
+        r"new StreamReader\(([^)]+)\)",
+        r"open(\1, 'r')  # StreamReader",
+        0,
+    ),
+    (r"\.ReadLine\(\)", ".readline()", 0),
+    (r"\.ReadToEnd\(\)", ".read()", 0),
+    (r"\.Write\(([^)]+)\)", r".write(\1)", 0),
+    (r"\.WriteLine\(([^)]+)\)", r".write(\1 + '\\n')", 0),
+    (r"\.Close\(\)", ".close()", 0),
+    (r"\.Dispose\(\)", ".close()  # Dispose", 0),
+    # --- Type conversions ---
+    (r"int\.Parse\(([^)]+)\)", r"int(\1)", 0),
+    (r"int\.TryParse\(([^,]+),\s*out\s+\w+\s+(\w+)\)", r"\2 = int(\1) if \1.isdigit() else 0", 0),
+    (r"Convert\.ToInt32\(([^)]+)\)", r"int(\1)", 0),
+    (r"Convert\.ToDouble\(([^)]+)\)", r"float(\1)", 0),
+    (r"Convert\.ToString\(([^)]+)\)", r"str(\1)", 0),
+    (r"Convert\.ToBoolean\(([^)]+)\)", r"bool(\1)", 0),
+    (r"Convert\.ToDateTime\(([^)]+)\)", r"datetime.fromisoformat(\1)", 0),
+    # --- String.Format ---
+    (r'string\.Format\("([^"]*)",\s*([^)]+)\)', r'"\1".format(\2)', 0),
+    (r"string\.Join\(([^,]+),\s*([^)]+)\)", r"\1.join(\2)", 0),
+    (r"string\.Concat\(([^)]+)\)", r'"".join([\1])', 0),
+    (r"string\.Empty\b", '""', 0),
+    # --- Exception handling ---
+    (r"\btry\s*\{?", "try:", 0),
+    (r"\bcatch\s*\(\s*(\w+)\s+(\w+)\s*\)\s*\{?", r"except Exception as \2:  # \1", 0),
+    (r"\bcatch\s*\{?", "except Exception:", 0),
+    (r"\bfinally\s*\{?", "finally:", 0),
+    (r"\bthrow new\s+\w+\(([^)]*)\)", r"raise Exception(\1)", 0),
+    (r"\bthrow\b", "raise", 0),
     # --- Braces / semicolons ---
     (r"^\s*\{\s*$", "", re.MULTILINE),
     (r"^\s*\}\s*$", "", re.MULTILINE),
@@ -115,18 +198,63 @@ _LINE_RULES: list[tuple[Any, ...]] = [
 # Patterns that we know we cannot handle — emit TODO
 _UNSUPPORTED_PATTERNS: list[tuple[str, str]] = [
     (r"\bThread\b", "threading"),
-    (r"\bTask\b", "async/await"),
-    (r"\bHttpClient\b", "HTTP client"),
-    (r"\bXmlDocument\b", "XML manipulation"),
-    (r"\bregex\b", "Regex"),
+    (r"\bTask\.Run\b|\bTask\.WhenAll\b", "async/await"),
+    (r"\bHttpClient\b|\bWebClient\b", "HTTP client"),
+    (r"\bXmlDocument\b|\bXElement\b|\bXDocument\b", "XML/LINQ manipulation"),
     (r"\bDelegate\b", "delegates"),
     (r"\bevent\b", "events"),
-    (r"\bAssembly\b", "reflection"),
+    (r"\bAssembly\b|\bReflection\b", "reflection"),
+    (r"\bWmi\b|\bManagementObject\b", "WMI access"),
+    (r"\bRegistry\b|\bRegistryKey\b", "Windows Registry"),
+    (r"\bProcess\.Start\b", "process execution"),
+    (r"\bSmtpClient\b|\bMailMessage\b", "email sending"),
+    (r"\bServiceController\b", "Windows services"),
+    (r"OleDb|\bOdbcConnection\b", "OLEDB/ODBC (use pyodbc instead)"),
+    (r"\bunsafe\b|\bfixed\b|\bstackalloc\b", "unsafe/pointer operations"),
 ]
 
 
 class CSharpTranspiler:
     """Converts simple C# Script Task source to Python."""
+
+    # Patterns that indicate a script is "low-risk" and mostly auto-migratable
+    _LOW_RISK_PATTERNS = {
+        "string_ops": re.compile(
+            r"\.(ToUpper|ToLower|Trim|Replace|Split|Contains|StartsWith|EndsWith)\(",
+        ),
+        "simple_loops": re.compile(r"\bfor\s*\(int\b|\bforeach\s*\("),
+        "basic_io": re.compile(r"File\.(ReadAllText|WriteAllText|Exists)"),
+        "logging": re.compile(r"Dts\.Log|Console\.WriteLine"),
+        "variables": re.compile(r"Dts\.Variables"),
+    }
+
+    # Patterns that indicate a script is "high-risk" and needs manual review
+    _HIGH_RISK_PATTERNS = {
+        "database": re.compile(r"SqlConnection|OleDb|OdbcConnection|ADO\.NET"),
+        "network": re.compile(r"HttpClient|WebClient|SmtpClient|FtpWebRequest"),
+        "system": re.compile(r"WmiObject|Registry|Process\.Start|ServiceController"),
+        "threading": re.compile(r"\bThread\b|Task\.Run|Task\.WhenAll"),
+        "unsafe": re.compile(r"\bunsafe\b|\bfixed\b|\bstackalloc\b"),
+    }
+
+    def classify_risk(self, csharp: str) -> str:
+        """Classify a C# script as ``"low"``, ``"medium"``, or ``"high"`` risk.
+
+        Low-risk scripts are mostly string/file ops and loops — typically
+        auto-migratable.  High-risk scripts use database, network, or OS
+        features that need manual review.
+        """
+        if not csharp or not csharp.strip():
+            return "low"
+
+        high_hits = sum(1 for p in self._HIGH_RISK_PATTERNS.values() if p.search(csharp))
+        if high_hits >= 1:
+            return "high"
+
+        low_hits = sum(1 for p in self._LOW_RISK_PATTERNS.values() if p.search(csharp))
+        if low_hits >= 2:
+            return "low"
+        return "medium"
 
     def transpile(self, csharp: str) -> str:
         """Convert *csharp* source code to a Python equivalent.
@@ -197,12 +325,13 @@ class CSharpTranspiler:
 
 _IMPORT_HINTS: list[tuple[str, str]] = [
     (r"\bdatetime\b", "from datetime import datetime"),
-    (r"\bos\.path\b|\bos\.remove\b", "import os"),
+    (r"\bos\.path\b|\bos\.remove\b|\bos\.makedirs\b|\bos\.listdir\b", "import os"),
     (r"\bmath\.", "import math"),
     (r"\bpyodbc\b", "import pyodbc"),
     (r"\bpathlib\b", "from pathlib import Path"),
     (r"\bjson\b", "import json"),
-    (r"\bre\b", "import re"),
+    (r"\bre\.", "import re"),
+    (r"\bshutil\.", "import shutil"),
 ]
 
 

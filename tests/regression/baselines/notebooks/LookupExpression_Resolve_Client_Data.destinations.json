@@ -1,0 +1,31 @@
+{
+  "destinations": [
+    {
+      "table": "Resolved Client",
+      "connectionRef": "cmgr_Reference",
+      "columns": [
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        }
+      ]
+    }
+  ]
+}

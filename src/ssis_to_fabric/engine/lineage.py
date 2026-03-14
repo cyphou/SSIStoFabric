@@ -31,7 +31,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ssis_to_fabric.analyzer.models import DataFlowComponentType, TaskType
 from ssis_to_fabric.logging_config import get_logger
@@ -168,7 +168,7 @@ class LineageGraph:
 
         return "\n".join(lines)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialisable representation of the lineage graph."""
         return {
             "tables": sorted(self.all_tables()),
@@ -197,7 +197,7 @@ class LineageGraph:
     def _scan_tasks(
         self,
         pkg_name: str,
-        tasks: list,
+        tasks: list[Any],
         sources: list[str],
         destinations: list[str],
     ) -> None:

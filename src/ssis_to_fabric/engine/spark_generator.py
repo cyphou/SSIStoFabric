@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from textwrap import dedent
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ssis_to_fabric.analyzer.models import (
     ControlFlowTask,
@@ -138,7 +138,7 @@ class SparkNotebookGenerator:
                 notebookutils = None  # type: ignore[assignment]
         """)
 
-    def _resolve_notebook_connection_id(self, conn_ref: str, connections: list) -> str:
+    def _resolve_notebook_connection_id(self, conn_ref: str, connections: list[Any]) -> str:
         """Resolve an SSIS connection-manager reference to a Fabric connection ID.
 
         Uses ``config.connection_mappings`` when available, otherwise emits a
@@ -402,7 +402,7 @@ class SparkNotebookGenerator:
         conn_arg = f'"{conn_name}"' if conn_name else '"TODO_CONNECTION_NAME"  # TODO: set connection name'
         lines = [
             f"# Source: {comp.name}{type_label}",
-            f"# Uses Fabric connection (same as pipeline externalReferences)",
+            "# Uses Fabric connection (same as pipeline externalReferences)",
             f"{var_name} = spark.read.format(\"jdbc\") \\",
             f"    .option(\"url\", _jdbc_url_for({conn_arg})) \\",
         ]
@@ -732,8 +732,8 @@ class SparkNotebookGenerator:
             f'df_existing = spark.read.format("delta").table("{safe_table}")',
             "",
             "# Join incoming rows to existing dimension on business key(s)",
-            f"df_merged = df.alias(\"src\").join(",
-            f'    df_existing.alias("tgt"),',
+            "df_merged = df.alias(\"src\").join(",
+            '    df_existing.alias("tgt"),',
             f"    on=[{bk_str}],",
             '    how="full"',
             ")",
@@ -759,11 +759,20 @@ class SparkNotebookGenerator:
                 'df_merged = df_merged.withColumn("_scd2_changed", F.lit(False))  # TODO: detect changes',
             ]
             for c in scd2_cols:
-                lines.append(f'df_merged = df_merged.withColumn("_scd2_changed", df_merged["_scd2_changed"] | (F.col("src.{c}") != F.col("tgt.{c}")))')
+                lines.append(
+                    f'df_merged = df_merged.withColumn("_scd2_changed",'
+                    f' df_merged["_scd2_changed"] | (F.col("src.{c}") != F.col("tgt.{c}")))',
+                )
             lines += [
-                'df_merged = df_merged.withColumn("EffectiveDate", F.when(F.col("_scd2_changed"), F.current_timestamp()).otherwise(F.col("tgt.EffectiveDate")))',
-                'df_merged = df_merged.withColumn("ExpirationDate", F.when(F.col("_scd2_changed"), F.lit(None)).otherwise(F.col("tgt.ExpirationDate")))',
-                'df_merged = df_merged.withColumn("IsCurrent", F.when(F.col("_scd2_changed"), F.lit(True)).otherwise(F.col("tgt.IsCurrent")))',
+                'df_merged = df_merged.withColumn("EffectiveDate",'
+                ' F.when(F.col("_scd2_changed"), F.current_timestamp())'
+                '.otherwise(F.col("tgt.EffectiveDate")))',
+                'df_merged = df_merged.withColumn("ExpirationDate",'
+                ' F.when(F.col("_scd2_changed"), F.lit(None))'
+                '.otherwise(F.col("tgt.ExpirationDate")))',
+                'df_merged = df_merged.withColumn("IsCurrent",'
+                ' F.when(F.col("_scd2_changed"), F.lit(True))'
+                '.otherwise(F.col("tgt.IsCurrent")))',
                 'df_merged = df_merged.drop("_scd2_changed")',
             ]
 
@@ -817,7 +826,11 @@ class SparkNotebookGenerator:
             from pyspark.sql.window import Window as _W
             _w = _W.partitionBy("_fuzzy_key").orderBy(F.col(_group_col))
             df = df.withColumn("_group_id", F.dense_rank().over(_w))
-            df = df.withColumn("_canonical", F.first(F.col(_group_col)).over(_w.rowsBetween(Window.unboundedPreceding, Window.unboundedFollowing)))
+            df = df.withColumn(
+                "_canonical",
+                F.first(F.col(_group_col)).over(
+                    _w.rowsBetween(Window.unboundedPreceding, Window.unboundedFollowing)),
+            )
             logger.info("Fuzzy grouping completed for {comp.name} (similarity >= {similarity})")
         ''')
 
@@ -870,9 +883,16 @@ class SparkNotebookGenerator:
                 elif "fullwidth" in op or "halfwidth" in op:
                     lines.append(f'# df = df.withColumn("{col.name}", ...)  # TODO: fullwidth/halfwidth conversion')
                 elif "linguistic" in op or "kana" in op or "katakana" in op or "hiragana" in op:
-                    lines.append(f'# df = df.withColumn("{col.name}", ...)  # TODO: linguistic casing / kana conversion')
+                    lines.append(
+                        f'# df = df.withColumn("{col.name}", ...)'
+                        f'  # TODO: linguistic casing / kana conversion',
+                    )
                 else:
-                    lines.append(f'df = df.withColumn("{col.name}", F.upper(F.col("{col.name}")))  # TODO: verify mapping type ({op})')
+                    lines.append(
+                        f'df = df.withColumn("{col.name}",'
+                        f' F.upper(F.col("{col.name}")))'
+                        f'  # TODO: verify mapping type ({op})',
+                    )
         else:
             lines.append('# TODO: Specify character mapping operations')
             lines.append('# df = df.withColumn("col", F.upper(F.col("col")))')
@@ -933,7 +953,10 @@ class SparkNotebookGenerator:
             df_inserts = df.filter(F.col("__$operation") == 2)
             df_updates = df.filter(F.col("__$operation") == 4)
             df_deletes = df.filter(F.col("__$operation") == 1)
-            logger.info(f"CDC split: {{df_inserts.count()}} inserts, {{df_updates.count()}} updates, {{df_deletes.count()}} deletes")
+            logger.info(
+                f"CDC split: {{df_inserts.count()}} inserts, "
+                f"{{df_updates.count()}} updates, {{df_deletes.count()}} deletes",
+            )
         ''')
 
     # -----------------------------------------------------------------
@@ -1579,7 +1602,7 @@ class SparkNotebookGenerator:
         if not destinations:
             return
 
-        entries: list[dict] = []
+        entries: list[dict[str, Any]] = []
         for dest in destinations:
             cols = [
                 {

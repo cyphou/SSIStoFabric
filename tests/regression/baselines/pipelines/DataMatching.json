@@ -1,0 +1,43 @@
+{
+  "name": "DataMatching",
+  "properties": {
+    "activities": [
+      {
+        "name": "Data_Flow_Task",
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "",
+          "workspaceId": ""
+        },
+        "dependsOn": [
+          {
+            "activity": "Execute_SQL_Task",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Execute_SQL_Task",
+        "type": "Script",
+        "typeProperties": {
+          "scripts": [
+            {
+              "type": "NonQuery",
+              "text": "TRUNCATE TABLE dbo.CustomersDirtyMatch;\nTRUNCATE TABLE dbo.CustomersDirtyNoMatch;\nTRUNCATE TABLE dbo.FuzzyMatchingResults;\n"
+            }
+          ],
+          "scriptBlockExecutionTimeout": "02:00:00"
+        },
+        "externalReferences": {
+          "connection": "localhost.DQS_STAGING_DATA  -- TODO: replace with Fabric connection id"
+        }
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ]
+  }
+}

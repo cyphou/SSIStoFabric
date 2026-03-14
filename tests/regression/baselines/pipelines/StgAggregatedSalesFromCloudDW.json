@@ -1,0 +1,10 @@
+{
+  "name": "StgAggregatedSalesFromCloudDW",
+  "properties": {
+    "activities": [],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ]
+  }
+}

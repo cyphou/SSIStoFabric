@@ -1,0 +1,89 @@
+{
+  "name": "LookupExpression",
+  "properties": {
+    "activities": [
+      {
+        "name": "Foreach_File",
+        "type": "ForEach",
+        "typeProperties": {
+          "isSequential": true,
+          "items": {
+            "value": "@activity('ListFiles').output.childItems  /* TODO: configure GetMetadata source */",
+            "type": "Expression"
+          },
+          "activities": [
+            {
+              "name": "Lower_Boundary",
+              "type": "SetVariable",
+              "typeProperties": {
+                "variableName": "Lower Boundary",
+                "value": {
+                  "value": "",
+                  "type": "Expression"
+                }
+              }
+            },
+            {
+              "name": "Person_Lookup_Query",
+              "type": "SetVariable",
+              "typeProperties": {
+                "variableName": "Person Lookup Query",
+                "value": {
+                  "value": "",
+                  "type": "Expression"
+                }
+              }
+            },
+            {
+              "name": "Resolve_Client_Data",
+              "type": "TridentNotebook",
+              "typeProperties": {
+                "notebookId": "",
+                "workspaceId": ""
+              }
+            },
+            {
+              "name": "Upper_Boundary",
+              "type": "SetVariable",
+              "typeProperties": {
+                "variableName": "Upper Boundary",
+                "value": {
+                  "value": "",
+                  "type": "Expression"
+                }
+              }
+            }
+          ]
+        },
+        "dependsOn": [
+          {
+            "activity": "Truncate_Resolved_Client",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Truncate_Resolved_Client",
+        "type": "Script",
+        "typeProperties": {
+          "scripts": [
+            {
+              "type": "NonQuery",
+              "text": "TRUNCATE TABLE dbo.ResolvedClient;"
+            }
+          ],
+          "scriptBlockExecutionTimeout": "02:00:00"
+        },
+        "externalReferences": {
+          "connection": "cmgr_Reference  -- TODO: replace with Fabric connection id"
+        }
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ]
+  }
+}

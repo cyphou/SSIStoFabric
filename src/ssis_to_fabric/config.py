@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -153,6 +154,11 @@ class MigrationConfig(BaseModel):
     )
     output_dir: Path = Field(default=Path("output"))
     log_level: LogLevel = Field(default=LogLevel.INFO)
+    parallel_workers: int = Field(
+        default=1,
+        ge=1,
+        description="Number of parallel worker threads for multi-agent migration (1 = sequential).",
+    )
 
     source: SourceConfig = Field(default_factory=SourceConfig)
     fabric: FabricConfig = Field(default_factory=FabricConfig)
@@ -191,7 +197,7 @@ class MigrationConfig(BaseModel):
         return cls(**data)
 
     @classmethod
-    def _apply_env_overrides(cls, data: dict) -> dict:
+    def _apply_env_overrides(cls, data: dict[str, Any]) -> dict[str, Any]:
         """Apply environment variable overrides to config data."""
         env_map = {
             "source": {

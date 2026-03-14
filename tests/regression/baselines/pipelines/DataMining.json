@@ -1,0 +1,19 @@
+{
+  "name": "DataMining",
+  "properties": {
+    "activities": [
+      {
+        "name": "Data_Flow_Task",
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "",
+          "workspaceId": ""
+        }
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ]
+  }
+}

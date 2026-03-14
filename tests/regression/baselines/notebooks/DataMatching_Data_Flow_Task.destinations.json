@@ -1,0 +1,127 @@
+{
+  "destinations": [
+    {
+      "table": "CustomersDirtyMatch",
+      "connectionRef": "localhost.DQS_STAGING_DATA",
+      "columns": [
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        }
+      ]
+    },
+    {
+      "table": "CustomersDirtyNoMatch",
+      "connectionRef": "localhost.DQS_STAGING_DATA",
+      "columns": [
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        }
+      ]
+    },
+    {
+      "table": "FuzzyMatchingResults",
+      "connectionRef": "localhost.DQS_STAGING_DATA",
+      "columns": [
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        }
+      ]
+    }
+  ]
+}

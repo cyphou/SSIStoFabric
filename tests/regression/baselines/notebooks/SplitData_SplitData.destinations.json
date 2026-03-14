@@ -1,0 +1,478 @@
+{
+  "destinations": [
+    {
+      "table": "TMTestSet",
+      "connectionRef": "(LOCAL).AdventureWorksDW2014",
+      "columns": [
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        }
+      ]
+    },
+    {
+      "table": "TMTrainingSet",
+      "connectionRef": "(LOCAL).AdventureWorksDW2014",
+      "columns": [
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "SplitData",
+  "properties": {
+    "activities": [
+      {
+        "name": "SplitData",
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "",
+          "workspaceId": ""
+        }
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ]
+  }
+}

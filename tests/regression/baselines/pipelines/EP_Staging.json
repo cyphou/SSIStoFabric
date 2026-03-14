@@ -1,0 +1,321 @@
+{
+  "name": "EP_Staging",
+  "properties": {
+    "activities": [
+      {
+        "name": "ept_StgAddress",
+        "type": "ExecutePipeline",
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "StgAddress",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {
+            "LoadExecutionId": {
+              "value": "@pipeline().parameters.LoadExecutionId",
+              "type": "Expression"
+            }
+          }
+        }
+      },
+      {
+        "name": "ept_StgCustomer",
+        "type": "ExecutePipeline",
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "StgCustomer",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {
+            "LoadExecutionId": {
+              "value": "@pipeline().parameters.LoadExecutionId",
+              "type": "Expression"
+            }
+          }
+        }
+      },
+      {
+        "name": "ept_StgCustomerAddress",
+        "type": "ExecutePipeline",
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "StgCustomerAddress",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {
+            "LoadExecutionId": {
+              "value": "@pipeline().parameters.LoadExecutionId",
+              "type": "Expression"
+            }
+          }
+        },
+        "dependsOn": [
+          {
+            "activity": "ept_StgAddress",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgCustomer",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "ept_StgProduct",
+        "type": "ExecutePipeline",
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "StgProduct",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {
+            "LoadExecutionId": {
+              "value": "@pipeline().parameters.LoadExecutionId",
+              "type": "Expression"
+            }
+          }
+        },
+        "dependsOn": [
+          {
+            "activity": "ept_StgProductCategory",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgProductDescription",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgProductModel",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgProductModelProductDescription",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "ept_StgProductCategory",
+        "type": "ExecutePipeline",
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "StgProductCategory",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {
+            "LoadExecutionId": {
+              "value": "@pipeline().parameters.LoadExecutionId",
+              "type": "Expression"
+            }
+          }
+        }
+      },
+      {
+        "name": "ept_StgProductDescription",
+        "type": "ExecutePipeline",
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "StgProductDescription",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {
+            "LoadExecutionId": {
+              "value": "@pipeline().parameters.LoadExecutionId",
+              "type": "Expression"
+            }
+          }
+        }
+      },
+      {
+        "name": "ept_StgProductModel",
+        "type": "ExecutePipeline",
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "StgProductModel",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {
+            "LoadExecutionId": {
+              "value": "@pipeline().parameters.LoadExecutionId",
+              "type": "Expression"
+            }
+          }
+        }
+      },
+      {
+        "name": "ept_StgProductModelProductDescription",
+        "type": "ExecutePipeline",
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "StgProductModelProductDescription",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {
+            "LoadID": {
+              "value": "@pipeline().parameters.LoadExecutionId",
+              "type": "Expression"
+            }
+          }
+        }
+      },
+      {
+        "name": "ept_StgSalesOrderDetail",
+        "type": "ExecutePipeline",
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "StgSalesOrderDetail",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {
+            "LoadExecutionId": {
+              "value": "@pipeline().parameters.LoadExecutionId",
+              "type": "Expression"
+            }
+          }
+        },
+        "dependsOn": [
+          {
+            "activity": "ept_StgAddress",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgCustomer",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgCustomerAddress",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgProduct",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgProductCategory",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgProductDescription",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgProductModel",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgProductModelProductDescription",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "ept_StgSalesOrderHeader",
+        "type": "ExecutePipeline",
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "StgSalesOrderHeader",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {
+            "LoadExecutionId": {
+              "value": "@pipeline().parameters.LoadExecutionId",
+              "type": "Expression"
+            }
+          }
+        },
+        "dependsOn": [
+          {
+            "activity": "ept_StgAddress",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgCustomer",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgCustomerAddress",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgProduct",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgProductCategory",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgProductDescription",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgProductModel",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "ept_StgProductModelProductDescription",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ]
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ]
+  }
+}

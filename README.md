@@ -12,10 +12,10 @@
 
 <p align="center">
   <a href="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml"><img src="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-  <img src="https://img.shields.io/badge/tests-492%20passed-brightgreen?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-708%20passed-brightgreen?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"/>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"/>
-  <img src="https://img.shields.io/badge/version-1.1.0-blue?style=flat-square" alt="Version"/>
+  <img src="https://img.shields.io/badge/version-1.3.0-blue?style=flat-square" alt="Version"/>
   <img src="https://img.shields.io/badge/pipelines-28-orange?style=flat-square" alt="Pipelines"/>
   <img src="https://img.shields.io/badge/notebooks-28-orange?style=flat-square" alt="Notebooks"/>
 </p>
@@ -63,11 +63,17 @@ pip install -e ".[dev]"
 ### More ways to migrate
 
 ```bash
-# 🔍 Analyze packages first
+# 🔍 Assess migration readiness
+ssis2fabric assess path/to/ssis_project/
+
+# 🔍 Analyze packages
 ssis2fabric analyze path/to/ssis_project/
 
 # 📋 Generate a plan without executing
 ssis2fabric plan path/to/ssis_project/ --strategy hybrid
+
+# 📋 Dry-run: show what would be generated
+ssis2fabric migrate path/to/project/ --strategy hybrid --dry-run
 
 # 🚀 Migrate + deploy to Fabric in one shot
 ssis2fabric migrate path/to/project/ --strategy hybrid --output ./output
@@ -218,7 +224,7 @@ SSISToFabric/
 │   ├── api.py                          # Public Python API (SSISMigrator facade)
 │   ├── config.py                       # Configuration management
 │   └── logging_config.py              # Structured logging (structlog)
-├── tests/                              # 492 tests across unit + regression
+├── tests/                              # 708 tests across unit + regression
 ├── examples/                           # 12 scenarios + full SSIS project (28 packages)
 ├── azure-pipelines.yml                 # Azure DevOps CI/CD
 ├── .github/workflows/ci.yml           # GitHub Actions CI/CD
@@ -535,12 +541,14 @@ from ssis_to_fabric import (
 
 | Command | Description |
 |---------|-------------|
+| `ssis2fabric assess <path>` | Pre-migration readiness assessment with effort estimates |
 | `ssis2fabric analyze <path>` | Parse SSIS packages and display migration assessment |
 | `ssis2fabric plan <path>` | Generate a migration plan without executing |
 | `ssis2fabric migrate <path>` | Full migration: analyze, plan, generate artifacts |
 | `ssis2fabric deploy <output_dir>` | Deploy artifacts to a Fabric workspace |
 | `ssis2fabric verify <output_dir>` | Verify deployed artifacts exist in workspace |
 | `ssis2fabric validate <baseline> <output>` | Non-regression comparison against baselines |
+| `ssis2fabric validate-config` | Validate migration configuration file |
 | `ssis2fabric extract-ssisdb <conn_str>` | Extract .dtsx packages from SSISDB catalog |
 
 ```bash
@@ -575,13 +583,13 @@ ssis2fabric extract-ssisdb "<conn-str>" --folder MyFolder --project MyProject
 ## 🧪 Testing
 
 <p align="center">
-  <img src="https://img.shields.io/badge/tests-492%20passed-brightgreen?style=for-the-badge" alt="Tests"/>
-  <img src="https://img.shields.io/badge/unit%20tests-478-blue?style=for-the-badge" alt="Unit Tests"/>
+  <img src="https://img.shields.io/badge/tests-708%20passed-brightgreen?style=for-the-badge" alt="Tests"/>
+  <img src="https://img.shields.io/badge/unit%20tests-694-blue?style=for-the-badge" alt="Unit Tests"/>
   <img src="https://img.shields.io/badge/regression-14-blue?style=for-the-badge" alt="Regression Tests"/>
 </p>
 
 ```bash
-pytest tests/ -v                                     # Run all 492 tests
+pytest tests/ -v                                     # Run all 708+ tests
 pytest tests/unit/ -v                                # Unit tests only
 pytest tests/unit/test_api.py -v                     # API facade tests
 pytest tests/unit/test_automation_features.py -v     # Expression transpiler tests
@@ -613,7 +621,7 @@ pytest tests/ --cov=ssis_to_fabric --cov-report=html # Coverage report
 
 ```mermaid
 flowchart LR
-    L["🔍 Lint\nruff + mypy"] --> T["🧪 Test\n492 tests\nPy 3.10–3.12"]
+    L["🔍 Lint\nruff + mypy"] --> T["🧪 Test\n708 tests\nPy 3.10–3.12"]
     T --> R["✅ Regression\nBaseline\nvalidation"]
     R --> D["📦 Dry Run\nSample migration"]
     D --> P["🚀 Deploy\nFabric workspace"]

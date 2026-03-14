@@ -1,0 +1,19 @@
+{
+  "name": "ProcessingExcel",
+  "properties": {
+    "activities": [
+      {
+        "name": "ProcessExcelOrders",
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "",
+          "workspaceId": ""
+        }
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ]
+  }
+}

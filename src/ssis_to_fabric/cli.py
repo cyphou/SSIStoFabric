@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from ssis_to_fabric.analyzer.dtsx_parser import DTSXParser
-from ssis_to_fabric.config import MigrationConfig, MigrationStrategy, load_config
+from ssis_to_fabric.config import LogLevel, MigrationConfig, MigrationStrategy, load_config
 from ssis_to_fabric.engine.migration_engine import MigrationEngine
 from ssis_to_fabric.logging_config import setup_logging
 
@@ -29,7 +29,7 @@ def main(ctx: click.Context, config: str, log_level: str | None) -> None:
     """SSIS to Fabric Migration Tool - Production-ready migration framework."""
     cfg = load_config(Path(config))
     if log_level:
-        cfg.log_level = log_level  # type: ignore
+        cfg.log_level = LogLevel(log_level)
     setup_logging(level=cfg.log_level.value, log_format="console")
     ctx.ensure_object(dict)
     ctx.obj["config"] = cfg
@@ -143,6 +143,16 @@ def plan(ctx: click.Context, path: str, strategy: str | None, output: str | None
     ),
 )
 @click.option("--output", "-o", type=click.Path(), default=None)
+@click.option(
+    "--workers", "-w", type=int, default=None,
+    help="Parallel worker threads (1 = sequential, >1 = multi-agent).",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Show what would be generated without writing files.",
+)
 @click.pass_context
 def migrate(
     ctx: click.Context,
@@ -150,6 +160,8 @@ def migrate(
     strategy: str | None,
     output: str | None,
     dataflow_type: str | None,
+    workers: int | None,
+    dry_run: bool,
 ) -> None:
     """Execute the full migration: analyze, plan, and generate Fabric artifacts."""
     config: MigrationConfig = ctx.obj["config"]
@@ -161,6 +173,8 @@ def migrate(
         config.dataflow_type = DataflowType(dataflow_type)
     if output:
         config.output_dir = Path(output)
+    if workers is not None:
+        config.parallel_workers = workers
 
     parser = DTSXParser()
     p = Path(path)
@@ -170,8 +184,43 @@ def migrate(
         console.print("[red]No SSIS packages found.[/red]")
         sys.exit(1)
 
-    engine = MigrationEngine(config)
-    result = engine.execute(packages)
+    # Dry-run mode: show the plan without generating files
+    if dry_run:
+        console.print("[yellow]DRY RUN — showing migration plan only (no files written).[/yellow]\n")
+        engine = MigrationEngine(config)
+        migration_plan = engine.create_plan(packages)
+
+        table = Table(title="Migration Plan (Dry Run)")
+        table.add_column("Package")
+        table.add_column("Task")
+        table.add_column("Type")
+        table.add_column("Target")
+        table.add_column("Complexity")
+
+        for item in migration_plan.items:
+            cx_style = {"LOW": "green", "MEDIUM": "yellow", "HIGH": "red", "MANUAL": "bold red"}.get(
+                item.complexity.value, "white"
+            )
+            table.add_row(
+                item.source_package,
+                item.source_task,
+                item.task_type,
+                item.target_artifact.value,
+                f"[{cx_style}]{item.complexity.value}[/{cx_style}]",
+            )
+
+        console.print(table)
+        console.print(f"\n[bold]Summary:[/bold] {migration_plan.summary}")
+        return
+
+    if config.parallel_workers > 1:
+        from ssis_to_fabric.engine.agents import AgentOrchestrator
+
+        orchestrator = AgentOrchestrator(config, max_workers=config.parallel_workers)
+        result = orchestrator.run(packages)
+    else:
+        engine = MigrationEngine(config)
+        result = engine.execute(packages)
 
     # Display results
     table = Table(title="Migration Results")
@@ -242,6 +291,19 @@ def migrate(
     default=None,
     help="Azure AD client secret (service principal auth)",
 )
+@click.option(
+    "--deploy-workers",
+    type=int,
+    default=1,
+    help="Parallel deploy threads (1 = sequential, >1 = parallel).",
+)
+@click.option(
+    "--on-error",
+    type=click.Choice(["continue", "rollback"]),
+    default="continue",
+    help="Action on deploy failure: continue or rollback created items.",
+)
+@click.option("--verify/--no-verify", default=True, help="Post-deploy verification check.")
 @click.pass_context
 def deploy(
     ctx: click.Context,
@@ -254,6 +316,9 @@ def deploy(
     tenant_id: str | None,
     client_id: str | None,
     client_secret: str | None,
+    deploy_workers: int,
+    on_error: str,
+    verify: bool,
 ) -> None:
     """Deploy migration artifacts to a Fabric workspace.
 
@@ -311,7 +376,12 @@ def deploy(
         console.print()
 
     # Deploy
-    report = deployer.deploy_all(Path(output_dir))
+    if deploy_workers > 1:
+        report = deployer.deploy_all_parallel(
+            Path(output_dir), max_workers=deploy_workers, on_error=on_error,
+        )
+    else:
+        report = deployer.deploy_all(Path(output_dir))
 
     # Display results
     table = Table(title="Deployment Results")
@@ -339,7 +409,24 @@ def deploy(
     )
 
     if report.failed > 0:
+        if on_error == "rollback":
+            console.print("[bold red]Rolling back deployed items...[/bold red]")
+            deleted, errs = report.rollback(deployer)
+            console.print(f"Rollback: {deleted} deleted, {errs} errors")
         sys.exit(1)
+
+    # Post-deploy verification
+    if verify and not dry_run and report.succeeded > 0:
+        console.print("\n[bold]Post-deployment verification...[/bold]")
+        checks = deployer.post_deploy_check(report)
+        ok = sum(1 for c in checks if c["status"] == "ok")
+        missing = sum(1 for c in checks if c["status"] == "missing")
+        if missing:
+            console.print(
+                f"[yellow]Verification: {ok} accessible, {missing} not yet visible[/yellow]"
+            )
+        else:
+            console.print(f"[green]All {ok} items verified accessible.[/green]")
 
 
 @main.command()
@@ -621,6 +708,216 @@ def lineage(
     if output:
         json_path = graph.write_json(Path(output))
         console.print(f"\n[green]Lineage JSON written:[/green] {json_path}")
+
+
+@main.command()
+@click.argument("output_dir", type=click.Path(exists=True))
+@click.option(
+    "--dialect",
+    type=click.Choice(["spark", "sql"]),
+    default="spark",
+    help="DDL dialect: 'spark' (Delta Lake) or 'sql' (T-SQL).",
+)
+@click.pass_context
+def provision(ctx: click.Context, output_dir: str, dialect: str) -> None:
+    """Generate Lakehouse / Warehouse DDL from destination manifests.
+
+    Scans OUTPUT_DIR for ``*.destinations.json`` sidecar files and
+    generates ``CREATE TABLE`` DDL scripts in ``OUTPUT_DIR/lakehouse/``.
+    """
+    from ssis_to_fabric.engine.lakehouse_provisioner import LakehouseProvisioner
+
+    provisioner = LakehouseProvisioner(dialect=dialect)
+    generated = provisioner.provision(Path(output_dir))
+
+    if not generated:
+        console.print("[yellow]No destination manifests found.[/yellow]")
+        return
+
+    table = Table(title="Lakehouse DDL Generation")
+    table.add_column("Table", style="cyan")
+    table.add_column("File")
+
+    for path in generated:
+        table.add_row(path.stem, str(path))
+
+    console.print(table)
+    console.print(f"\n[green]{len(generated)} DDL file(s) generated.[/green]")
+
+
+# =========================================================================
+# Phase 5 Commands
+# =========================================================================
+
+
+@main.command()
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--strategy", type=click.Choice(["data_factory", "spark", "hybrid"]), default=None)
+@click.option("--output", "-o", type=click.Path(), default=None, help="Write assessment JSON to file")
+@click.pass_context
+def assess(ctx: click.Context, path: str, strategy: str | None, output: str | None) -> None:
+    """Pre-migration readiness assessment with effort estimates.
+
+    Analyses SSIS packages and produces a readiness score (0-100),
+    per-package effort estimates, risk flags, and a connection inventory
+    without generating any migration artifacts.
+    """
+    config: MigrationConfig = ctx.obj["config"]
+    if strategy:
+        config.strategy = MigrationStrategy(strategy)
+
+    parser = DTSXParser()
+    p = Path(path)
+    packages = [parser.parse(p)] if p.is_file() else parser.parse_directory(p)
+
+    if not packages:
+        console.print("[red]No SSIS packages found.[/red]")
+        sys.exit(1)
+
+    engine = MigrationEngine(config)
+    report = engine.assess(packages)
+
+    # Readiness score
+    score = report.readiness_score
+    score_color = "green" if score >= 70 else "yellow" if score >= 40 else "red"
+    console.print(f"\n[bold]Migration Readiness Score:[/bold] [{score_color}]{score}/100[/{score_color}]")
+    console.print(f"  Packages: {report.total_packages}")
+    console.print(f"  Total tasks: {report.total_tasks}")
+    console.print(f"  Data flows: {report.total_data_flows}")
+    console.print(f"  Unique connections: {report.total_connections}")
+    console.print(f"  Auto-migratable: {report.auto_migrate_pct:.0f}%")
+    console.print(f"  Estimated effort: [bold]{report.estimated_total_hours:.1f} hours[/bold]\n")
+
+    # Per-package table
+    table = Table(title="Package Assessment")
+    table.add_column("Package", style="cyan")
+    table.add_column("Tasks", justify="right")
+    table.add_column("Flows", justify="right")
+    table.add_column("Complexity")
+    table.add_column("Hours", justify="right")
+    table.add_column("Auto %", justify="right")
+    table.add_column("Risks", justify="right")
+
+    for pkg in report.packages:
+        cx_style = {"LOW": "green", "MEDIUM": "yellow", "HIGH": "red", "MANUAL": "bold red"}.get(
+            pkg.complexity, "white"
+        )
+        table.add_row(
+            pkg.name,
+            str(pkg.tasks),
+            str(pkg.data_flows),
+            f"[{cx_style}]{pkg.complexity}[/{cx_style}]",
+            f"{pkg.estimated_hours:.1f}",
+            f"{pkg.auto_migrate_pct:.0f}%",
+            str(len(pkg.risks)),
+        )
+
+    console.print(table)
+
+    # Risks
+    all_risks = [(p.name, r) for p in report.packages for r in p.risks]
+    if all_risks:
+        console.print(f"\n[yellow]Risks ({len(all_risks)}):[/yellow]")
+        for pkg_name, risk in all_risks:
+            console.print(f"  [{pkg_name}] {risk}")
+
+    # Connection inventory
+    if report.connection_inventory:
+        conn_table = Table(title="Connection Inventory")
+        conn_table.add_column("Name", style="cyan")
+        conn_table.add_column("Type")
+        conn_table.add_column("Server")
+        conn_table.add_column("Database")
+        for c in report.connection_inventory:
+            conn_table.add_row(c["name"], c["type"], c["server"], c["database"])
+        console.print(conn_table)
+
+    # Write JSON if requested
+    if output:
+        import json
+
+        out_path = Path(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+        console.print(f"\n[green]Assessment written to:[/green] {out_path}")
+
+
+@main.command(name="validate-config")
+@click.pass_context
+def validate_config(ctx: click.Context) -> None:
+    """Validate the migration configuration file.
+
+    Checks that the loaded configuration is valid, required fields are
+    present for the chosen strategy, and connection mappings reference
+    valid UUIDs.
+    """
+    import re as _re
+
+    config: MigrationConfig = ctx.obj["config"]
+    issues: list[tuple[str, str]] = []  # (severity, message)
+
+    # Check strategy-specific requirements
+    if config.strategy == MigrationStrategy.HYBRID:
+        pass  # No special requirements
+    elif config.strategy == MigrationStrategy.DATA_FACTORY:
+        pass
+
+    # Check Fabric workspace
+    if not config.fabric.workspace_id:
+        issues.append(("warning", "fabric.workspace_id is not set — needed for deployment"))
+
+    # Check connection mappings format (should be UUIDs)
+    uuid_re = _re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", _re.I)
+    for name, conn_id in config.connection_mappings.mappings.items():
+        if conn_id and not uuid_re.match(conn_id):
+            issues.append(("warning", f"connection_mappings.{name}: '{conn_id}' is not a valid UUID"))
+
+    # Check output directory is writable
+    try:
+        config.output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        issues.append(("error", f"output_dir '{config.output_dir}' is not writable: {e}"))
+
+    # Check source configuration
+    if not config.source.packages_path and not config.source.catalog_server:
+        issues.append(("info", "No source configured — set packages_path or catalog_server"))
+
+    # Check retry config bounds
+    if config.retry.max_retries < 0:
+        issues.append(("error", "retry.max_retries must be non-negative"))
+    if config.retry.base_delay <= 0:
+        issues.append(("error", "retry.base_delay must be positive"))
+
+    # Check parallel workers
+    if config.parallel_workers < 1:
+        issues.append(("error", "parallel_workers must be >= 1"))
+
+    # Display results
+    if not issues:
+        console.print("[green]Configuration is valid.[/green]")
+        console.print(f"  Strategy: {config.strategy.value}")
+        console.print(f"  Output: {config.output_dir}")
+        console.print(f"  Workers: {config.parallel_workers}")
+        if config.fabric.workspace_id:
+            console.print(f"  Workspace: {config.fabric.workspace_id}")
+        return
+
+    table = Table(title="Configuration Issues")
+    table.add_column("Severity")
+    table.add_column("Issue")
+
+    for severity, message in issues:
+        style = {"error": "red", "warning": "yellow", "info": "blue"}.get(severity, "white")
+        table.add_row(f"[{style}]{severity.upper()}[/{style}]", message)
+
+    console.print(table)
+
+    errors = sum(1 for s, _ in issues if s == "error")
+    if errors:
+        console.print(f"\n[red]{errors} error(s) found — fix before migrating.[/red]")
+        sys.exit(1)
+    else:
+        console.print(f"\n[yellow]{len(issues)} warning(s)/info(s) — review recommended.[/yellow]")
 
 
 if __name__ == "__main__":

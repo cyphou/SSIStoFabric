@@ -1,0 +1,66 @@
+{
+  "name": "StgProductDescription",
+  "properties": {
+    "activities": [
+      {
+        "name": "dft_Staging_StgProductDescription",
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "",
+          "workspaceId": "",
+          "parameters": {
+            "LoadExecutionId": {
+              "value": "@pipeline().parameters.LoadExecutionId",
+              "type": "Expression"
+            }
+          }
+        },
+        "dependsOn": [
+          {
+            "activity": "sql_DeleteCurrentLoadExecutionIdData",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "sql_DeleteCurrentLoadExecutionIdData",
+        "type": "Script",
+        "typeProperties": {
+          "scripts": [
+            {
+              "type": "NonQuery",
+              "text": "DELETE FROM [Staging].[StgProductDescription] WHERE [LoadExecutionId] = @p0",
+              "parameters": [
+                {
+                  "name": "p0",
+                  "type": "Int32",
+                  "value": {
+                    "value": "@pipeline().parameters.LoadExecutionId",
+                    "type": "Expression"
+                  },
+                  "direction": "Input"
+                }
+              ]
+            }
+          ],
+          "scriptBlockExecutionTimeout": "02:00:00"
+        },
+        "externalReferences": {
+          "connection": "cmgr_DW  -- TODO: replace with Fabric connection id"
+        }
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ],
+    "parameters": {
+      "LoadExecutionId": {
+        "type": "String",
+        "defaultValue": "0"
+      }
+    }
+  }
+}

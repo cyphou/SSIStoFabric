@@ -1,0 +1,72 @@
+{
+  "name": "LookupCache",
+  "properties": {
+    "activities": [
+      {
+        "name": "Foreach_File",
+        "type": "ForEach",
+        "typeProperties": {
+          "isSequential": true,
+          "items": {
+            "value": "@activity('ListFiles').output.childItems  /* TODO: configure GetMetadata source */",
+            "type": "Expression"
+          },
+          "activities": [
+            {
+              "name": "Resolve_Client_Data",
+              "type": "TridentNotebook",
+              "typeProperties": {
+                "notebookId": "",
+                "workspaceId": ""
+              }
+            }
+          ]
+        },
+        "dependsOn": [
+          {
+            "activity": "Load_Person_Cache",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Load_Person_Cache",
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "",
+          "workspaceId": ""
+        },
+        "dependsOn": [
+          {
+            "activity": "Truncate_Resolved_Client",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Truncate_Resolved_Client",
+        "type": "Script",
+        "typeProperties": {
+          "scripts": [
+            {
+              "type": "NonQuery",
+              "text": "TRUNCATE TABLE dbo.ResolvedClient;"
+            }
+          ],
+          "scriptBlockExecutionTimeout": "02:00:00"
+        },
+        "externalReferences": {
+          "connection": "cmgr_Reference  -- TODO: replace with Fabric connection id"
+        }
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ]
+  }
+}

@@ -1,0 +1,164 @@
+{
+  "destinations": [
+    {
+      "table": "ole_dst_Staging_StgSalesOrderHeader",
+      "connectionRef": "cmgr_DW",
+      "columns": [
+        {
+          "name": "ModifiedDate",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "SalesOrderID",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        }
+      ]
+    }
+  ]
+}

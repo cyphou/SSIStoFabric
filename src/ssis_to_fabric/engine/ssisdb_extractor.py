@@ -9,7 +9,7 @@ Requires: pyodbc (pip install pyodbc)
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ssis_to_fabric.logging_config import get_logger
 
@@ -76,7 +76,7 @@ class SSISDBExtractor:
         self,
         folder_name: str | None = None,
         project_name: str | None = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """List all deployed packages in SSISDB.
 
         Returns:
@@ -111,7 +111,7 @@ class SSISDBExtractor:
         logger.info("ssisdb_packages_listed", count=len(packages))
         return packages
 
-    def extract_package(self, pkg_info: dict, output_dir: Path) -> Path:
+    def extract_package(self, pkg_info: dict[str, Any], output_dir: Path) -> Path:
         """Extract a single package to a .dtsx file.
 
         Args:
@@ -135,9 +135,18 @@ class SSISDBExtractor:
             raise RuntimeError(f"Could not extract package {pkg_info['name']} from project {pkg_info['project']}")
 
         # Write to: output_dir / folder / project / package.dtsx
-        pkg_dir = output_dir / pkg_info["folder"] / pkg_info["project"]
+        folder = pkg_info["folder"]
+        project = pkg_info["project"]
+        pkg_name = pkg_info["name"]
+        # Validate path components to prevent directory traversal
+        for component in (folder, project, pkg_name):
+            if ".." in component or component.startswith(("/", "\\")):
+                raise ValueError(f"Invalid path component: {component!r}")
+        pkg_dir = (output_dir / folder / project).resolve()
+        if not str(pkg_dir).startswith(str(output_dir.resolve())):
+            raise ValueError(f"Path traversal detected: {pkg_dir}")
         pkg_dir.mkdir(parents=True, exist_ok=True)
-        output_path = pkg_dir / pkg_info["name"]
+        output_path = pkg_dir / pkg_name
         if not output_path.suffix:
             output_path = output_path.with_suffix(".dtsx")
 
@@ -151,6 +160,7 @@ class SSISDBExtractor:
 
     def _extract_direct(self, package_id: int) -> bytes | None:
         """Try reading the package blob from internal.packages."""
+        assert self._conn is not None, "Not connected – call connect() first"
         cursor = self._conn.cursor()
         try:
             cursor.execute(_EXTRACT_PACKAGE_SQL, (package_id,))
@@ -167,6 +177,7 @@ class SSISDBExtractor:
         import io
         import zipfile
 
+        assert self._conn is not None, "Not connected – call connect() first"
         cursor = self._conn.cursor()
         try:
             cursor.execute(_EXTRACT_VIA_PROJECT_SQL, (folder, project))

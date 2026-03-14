@@ -1,0 +1,35 @@
+{
+  "name": "TermExtractionLookup",
+  "properties": {
+    "activities": [
+      {
+        "name": "TermExtraction",
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "",
+          "workspaceId": ""
+        }
+      },
+      {
+        "name": "TermLookup",
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "",
+          "workspaceId": ""
+        },
+        "dependsOn": [
+          {
+            "activity": "TermExtraction",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ]
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ]
+  }
+}

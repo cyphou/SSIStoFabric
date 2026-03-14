@@ -1,0 +1,53 @@
+{
+  "name": "RegExValidation",
+  "properties": {
+    "activities": [
+      {
+        "name": "ReadPatterns",
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "",
+          "workspaceId": "",
+          "parameters": {
+            "DataProfileName": {
+              "value": "@pipeline().parameters.DataProfileName",
+              "type": "Expression"
+            }
+          }
+        }
+      },
+      {
+        "name": "Validate_Person_Data",
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "",
+          "workspaceId": "",
+          "parameters": {
+            "DataProfileName": {
+              "value": "@pipeline().parameters.DataProfileName",
+              "type": "Expression"
+            }
+          }
+        },
+        "dependsOn": [
+          {
+            "activity": "ReadPatterns",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ]
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ],
+    "parameters": {
+      "DataProfileName": {
+        "type": "String",
+        "defaultValue": "C:\\SSIS2016Cookbook\\Chapter07\\Files\\DataProfiling.xml"
+      }
+    }
+  }
+}

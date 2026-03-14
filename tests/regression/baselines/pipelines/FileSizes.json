@@ -1,0 +1,48 @@
+{
+  "name": "FileSizes",
+  "properties": {
+    "activities": [
+      {
+        "name": "FilesBySize",
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "",
+          "workspaceId": ""
+        }
+      },
+      {
+        "name": "GetFileNameBySize",
+        "type": "ForEach",
+        "typeProperties": {
+          "isSequential": true,
+          "items": {
+            "value": "@variables('iterationArray')  /* TODO: populate from SSIS variable */",
+            "type": "Expression"
+          },
+          "activities": [
+            {
+              "name": "ShowFileNames",
+              "type": "TridentNotebook",
+              "typeProperties": {
+                "notebookId": "",
+                "workspaceId": ""
+              }
+            }
+          ]
+        },
+        "dependsOn": [
+          {
+            "activity": "FilesBySize",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ]
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ]
+  }
+}

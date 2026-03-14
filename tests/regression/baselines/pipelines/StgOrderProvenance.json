@@ -1,0 +1,19 @@
+{
+  "name": "StgOrderProvenance",
+  "properties": {
+    "activities": [
+      {
+        "name": "dft_OrderProvenance",
+        "type": "Wait",
+        "typeProperties": {
+          "waitTimeInSeconds": 1
+        },
+        "description": "TODO: Manual migration required. Original SSIS task type: UNKNOWN. Description: Data Flow Task"
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ]
+  }
+}

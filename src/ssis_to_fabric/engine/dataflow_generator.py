@@ -126,7 +126,7 @@ class DataflowGen2Generator:
         if not destinations:
             return
 
-        entries: list[dict] = []
+        entries: list[dict[str, Any]] = []
         for dest in destinations:
             cols = [
                 {
@@ -731,8 +731,8 @@ class DataflowGen2Generator:
         def _replace_var(m: _re.Match) -> str:  # type: ignore[type-arg]
             ns, vn = m.group(1), m.group(2)
             if ns.lower() == "system" and vn in _system_var_map:
-                return _system_var_map[vn]
-            return vn
+                return str(_system_var_map[vn])
+            return str(vn)
 
         expr = _re.sub(
             r"@\[\s*\$?(Package|User|Project|System)\s*::\s*(\w+)\s*\]",
@@ -999,7 +999,7 @@ class DataflowGen2Generator:
         return sanitized.strip("_")[:260]
 
     @staticmethod
-    def _filter_error_columns(columns: list) -> list:
+    def _filter_error_columns(columns: list[Any]) -> list[Any]:
         """Remove SSIS error-output columns (ErrorCode, ErrorColumn, empty name).
 
         These columns belong to the SSIS error output path and should not

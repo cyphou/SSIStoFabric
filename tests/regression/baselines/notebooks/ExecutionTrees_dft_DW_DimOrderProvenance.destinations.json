@@ -1,0 +1,31 @@
+{
+  "destinations": [
+    {
+      "table": "ole_dst_DW_DimOrderProvenance",
+      "connectionRef": "cmgr_DW",
+      "columns": [
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        },
+        {
+          "name": "",
+          "dataType": "",
+          "length": 0,
+          "precision": 0,
+          "scale": 0
+        }
+      ]
+    }
+  ]
+}

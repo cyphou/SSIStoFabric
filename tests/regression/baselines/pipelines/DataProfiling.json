@@ -1,0 +1,19 @@
+{
+  "name": "DataProfiling",
+  "properties": {
+    "activities": [
+      {
+        "name": "Data_Profiling_Task",
+        "type": "Wait",
+        "typeProperties": {
+          "waitTimeInSeconds": 1
+        },
+        "description": "TODO: Manual migration required. Original SSIS task type: UNKNOWN. Description: Data Profiling Task"
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ]
+  }
+}

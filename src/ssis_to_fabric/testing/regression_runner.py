@@ -211,7 +211,7 @@ class RegressionRunner:
         except json.JSONDecodeError as e:
             return {"file": str(pipeline_path), "status": "fail", "errors": [f"Invalid JSON: {e}"]}
 
-    def _validate_activity(self, activity: dict, index: int) -> list[str]:
+    def _validate_activity(self, activity: dict[str, Any], index: int) -> list[str]:
         """Validate a single pipeline activity."""
         errors = []
         prefix = f"Activity[{index}]"
@@ -304,8 +304,9 @@ class RegressionRunner:
             tgt_engine = create_engine(target_connection)
 
             # Row count comparison
-            src_count = pd.read_sql(f"SELECT COUNT(*) as cnt FROM {table_name}", src_engine).iloc[0]["cnt"]
-            tgt_count = pd.read_sql(f"SELECT COUNT(*) as cnt FROM {table_name}", tgt_engine).iloc[0]["cnt"]
+            safe_table = table_name.replace("]", "]]")  # Escape SQL identifiers
+            src_count = pd.read_sql(f"SELECT COUNT(*) as cnt FROM [{safe_table}]", src_engine).iloc[0]["cnt"]
+            tgt_count = pd.read_sql(f"SELECT COUNT(*) as cnt FROM [{safe_table}]", tgt_engine).iloc[0]["cnt"]
 
             count_match = src_count == tgt_count
             tolerance = self.config.regression.tolerance_row_count
@@ -320,8 +321,8 @@ class RegressionRunner:
             }
 
             # Schema comparison
-            src_cols = pd.read_sql(f"SELECT TOP 0 * FROM {table_name}", src_engine).columns.tolist()
-            tgt_cols = pd.read_sql(f"SELECT TOP 0 * FROM {table_name}", tgt_engine).columns.tolist()
+            src_cols = pd.read_sql(f"SELECT TOP 0 * FROM [{safe_table}]", src_engine).columns.tolist()
+            tgt_cols = pd.read_sql(f"SELECT TOP 0 * FROM [{safe_table}]", tgt_engine).columns.tolist()
 
             missing_cols = set(src_cols) - set(tgt_cols)
             extra_cols = set(tgt_cols) - set(src_cols)
@@ -334,14 +335,13 @@ class RegressionRunner:
 
             # Sample data comparison
             sample_size = self.config.regression.sample_size
-            order_clause = ", ".join(key_columns) if key_columns else "1"
-
+            safe_cols = ", ".join(f"[{c.replace(']', ']]')}]" for c in key_columns) if key_columns else "1"
             src_sample = pd.read_sql(
-                f"SELECT TOP {sample_size} * FROM {table_name} ORDER BY {order_clause}",
+                f"SELECT TOP {int(sample_size)} * FROM [{safe_table}] ORDER BY {safe_cols}",
                 src_engine,
             )
             tgt_sample = pd.read_sql(
-                f"SELECT TOP {sample_size} * FROM {table_name} ORDER BY {order_clause}",
+                f"SELECT TOP {int(sample_size)} * FROM [{safe_table}] ORDER BY {safe_cols}",
                 tgt_engine,
             )
 
@@ -403,7 +403,7 @@ class RegressionRunner:
             parts.append(f"{len(diff['iterable_item_removed'])} list item(s) removed")
         return ", ".join(parts) if parts else "Unknown differences"
 
-    def generate_report(self) -> dict:
+    def generate_report(self) -> dict[str, Any]:
         """Generate a summary report of all regression results."""
         total = len(self.results)
         passed = sum(1 for r in self.results if r["status"] == "pass")

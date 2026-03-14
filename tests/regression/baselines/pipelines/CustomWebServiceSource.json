@@ -1,0 +1,47 @@
+{
+  "name": "CustomWebServiceSource",
+  "properties": {
+    "activities": [
+      {
+        "name": "Airport_Information",
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "",
+          "workspaceId": "",
+          "parameters": {
+            "CountryName": {
+              "value": "@pipeline().parameters.CountryName",
+              "type": "Expression"
+            },
+            "JSONFileNameFormat": {
+              "value": "@pipeline().parameters.JSONFileNameFormat",
+              "type": "Expression"
+            },
+            "JSONFilePath": {
+              "value": "@pipeline().parameters.JSONFilePath",
+              "type": "Expression"
+            }
+          }
+        }
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ],
+    "parameters": {
+      "CountryName": {
+        "type": "String",
+        "defaultValue": "France"
+      },
+      "JSONFileNameFormat": {
+        "type": "String",
+        "defaultValue": "AirportInfo_{0:D3}.JSON"
+      },
+      "JSONFilePath": {
+        "type": "String",
+        "defaultValue": "C:\\SSIS2016Cookbook\\Chapter07\\Files"
+      }
+    }
+  }
+}

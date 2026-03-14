@@ -1,0 +1,47 @@
+{
+  "name": "ExecutionTrees",
+  "properties": {
+    "activities": [
+      {
+        "name": "dft_DW_DimOrderProvenance",
+        "type": "TridentNotebook",
+        "typeProperties": {
+          "notebookId": "",
+          "workspaceId": "",
+          "parameters": {
+            "LoadDate": {
+              "value": "@pipeline().parameters.LoadDate",
+              "type": "Expression"
+            },
+            "LoadID": {
+              "value": "@pipeline().parameters.LoadID",
+              "type": "Expression"
+            },
+            "SourceLoadID": {
+              "value": "@pipeline().parameters.SourceLoadID",
+              "type": "Expression"
+            }
+          }
+        }
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ],
+    "parameters": {
+      "LoadDate": {
+        "type": "String",
+        "defaultValue": "1/1/1900"
+      },
+      "LoadID": {
+        "type": "String",
+        "defaultValue": "0"
+      },
+      "SourceLoadID": {
+        "type": "String",
+        "defaultValue": "0"
+      }
+    }
+  }
+}

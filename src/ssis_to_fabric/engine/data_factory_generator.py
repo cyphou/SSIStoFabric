@@ -157,6 +157,11 @@ class DataFactoryGenerator:
             precedence_constraints=package.precedence_constraints,
         )
 
+        # Convert SSIS event handlers → failure-path activities
+        event_activities = self._event_handlers_to_activities(package)
+        if event_activities:
+            activities.extend(event_activities)
+
         pipeline = self._build_pipeline_definition(
             name=self._sanitize_name(package.name),
             activities=activities,
@@ -185,8 +190,8 @@ class DataFactoryGenerator:
         connections: list[ConnectionManager],
         task_routing: dict[str, TargetArtifact],
         preceding: list[str] | None = None,
-        precedence_constraints: list | None = None,
-    ) -> list[dict]:
+        precedence_constraints: list[Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Flatten tasks into pipeline activities with proper dependency chains.
 
@@ -204,7 +209,7 @@ class DataFactoryGenerator:
         Returns:
             Flat list of pipeline activity dicts with dependsOn chains.
         """
-        activities: list[dict] = []
+        activities: list[dict[str, Any]] = []
         prev_names: list[str] = list(preceding) if preceding else []
 
         # Build dependency graph from precedence constraints if available.
@@ -346,7 +351,7 @@ class DataFactoryGenerator:
         task: ControlFlowTask,
         connections: list[ConnectionManager],
         task_routing: dict[str, TargetArtifact],
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """
         Convert a single task to a pipeline activity using routing info.
 
@@ -405,7 +410,7 @@ class DataFactoryGenerator:
         # Standard conversion for all other types (Execute SQL, Execute Package, etc.)
         return self._task_to_activity(task, connections)
 
-    def _to_dataflow_ref(self, task: ControlFlowTask) -> dict:
+    def _to_dataflow_ref(self, task: ControlFlowTask) -> dict[str, Any]:
         """Generate a Dataflow activity referencing a Dataflow Gen2 item."""
         return {
             "name": self._sanitize_name(task.name),
@@ -420,7 +425,7 @@ class DataFactoryGenerator:
         self,
         task: ControlFlowTask,
         package: SSISPackage | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Generate a TridentNotebook activity referencing a Spark notebook.
 
         When *package* is provided the activity forwards all pipeline
@@ -466,7 +471,7 @@ class DataFactoryGenerator:
         task: ControlFlowTask,
         connections: list[ConnectionManager],
         task_routing: dict[str, TargetArtifact],
-    ) -> dict:
+    ) -> dict[str, Any]:
         """ForEach activity with routing-aware child conversion."""
         child_activities = [self._convert_task_for_package(c, connections, task_routing) for c in task.child_tasks]
         child_activities = [a for a in child_activities if a is not None]
@@ -491,7 +496,7 @@ class DataFactoryGenerator:
         task: ControlFlowTask,
         connections: list[ConnectionManager],
         task_routing: dict[str, TargetArtifact],
-    ) -> dict:
+    ) -> dict[str, Any]:
         """For Loop (Until) activity with routing-aware child conversion."""
         child_activities = [self._convert_task_for_package(c, connections, task_routing) for c in task.child_tasks]
         child_activities = [a for a in child_activities if a is not None]
@@ -516,10 +521,10 @@ class DataFactoryGenerator:
     def _build_pipeline_definition(
         self,
         name: str,
-        activities: list[dict],
-        parameters: dict | None = None,
-        variables: dict | None = None,
-    ) -> dict:
+        activities: list[dict[str, Any]],
+        parameters: dict[str, Any] | None = None,
+        variables: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Build a Fabric Data Factory pipeline JSON structure."""
         pipeline: dict[str, Any] = {
             "name": name,
@@ -541,7 +546,7 @@ class DataFactoryGenerator:
     # Task-to-Activity Conversion
     # =========================================================================
 
-    def _task_to_activity(self, task: ControlFlowTask, connections: list[ConnectionManager]) -> dict | None:
+    def _task_to_activity(self, task: ControlFlowTask, connections: list[ConnectionManager]) -> dict[str, Any] | None:
         """Convert an SSIS task to a Data Factory activity."""
         if task.disabled:
             return None
@@ -571,7 +576,9 @@ class DataFactoryGenerator:
         else:
             return self._unknown_task_placeholder(task)
 
-    def _data_flow_to_copy_activity(self, task: ControlFlowTask, connections: list[ConnectionManager]) -> dict:
+    def _data_flow_to_copy_activity(
+        self, task: ControlFlowTask, connections: list[ConnectionManager],
+    ) -> dict[str, Any]:
         """
         Convert SSIS Data Flow Task to Copy Activity.
         Maps source and destination components to Copy Activity source/sink.
@@ -630,7 +637,9 @@ class DataFactoryGenerator:
 
         return activity
 
-    def _build_copy_source(self, comp: DataFlowComponent | None, connections: list[ConnectionManager]) -> dict:
+    def _build_copy_source(
+        self, comp: DataFlowComponent | None, connections: list[ConnectionManager],
+    ) -> dict[str, Any]:
         """Build Copy Activity source configuration (type-aware)."""
         if comp is None:
             return {"type": "SqlSource", "sqlReaderQuery": "-- TODO: Configure source query"}
@@ -696,7 +705,7 @@ class DataFactoryGenerator:
             }
         return {"type": "SqlSource", "sqlReaderQuery": "-- TODO: Configure source"}
 
-    def _build_copy_sink(self, comp: DataFlowComponent | None, connections: list[ConnectionManager]) -> dict:
+    def _build_copy_sink(self, comp: DataFlowComponent | None, connections: list[ConnectionManager]) -> dict[str, Any]:
         """Build Copy Activity sink configuration (type-aware)."""
         if comp is None:
             return {"type": "SqlSink", "writeBehavior": "insert"}
@@ -745,7 +754,7 @@ class DataFactoryGenerator:
             **({"tableName": table} if table else {}),
         }
 
-    def _build_column_mappings(self, source: DataFlowComponent, dest: DataFlowComponent) -> list[dict]:
+    def _build_column_mappings(self, source: DataFlowComponent, dest: DataFlowComponent) -> list[dict[str, Any]]:
         """Build column mappings between source and destination."""
         mappings = []
         dest_cols = {c.name.lower(): c.name for c in dest.columns}
@@ -760,7 +769,7 @@ class DataFactoryGenerator:
             )
         return mappings
 
-    def _execute_sql_to_activity(self, task: ControlFlowTask, connections: list[ConnectionManager]) -> dict:
+    def _execute_sql_to_activity(self, task: ControlFlowTask, connections: list[ConnectionManager]) -> dict[str, Any]:
         """Convert Execute SQL task to a Fabric Script activity.
 
         In Fabric Data Factory, all SQL execution uses the **Script** activity
@@ -818,7 +827,7 @@ class DataFactoryGenerator:
 
         return activity
 
-    def _sql_param_to_fabric(self, index: int, param: SqlParameterBinding) -> dict:
+    def _sql_param_to_fabric(self, index: int, param: SqlParameterBinding) -> dict[str, Any]:
         """Convert a single SSIS SQL parameter binding to a Fabric scriptParameter.
 
         Returns a dict like::
@@ -915,7 +924,7 @@ class DataFactoryGenerator:
             return "Query"
         return "NonQuery"
 
-    def _resolve_connection_ref(self, conn_ref: str, connections: list[ConnectionManager]) -> dict | None:
+    def _resolve_connection_ref(self, conn_ref: str, connections: list[ConnectionManager]) -> dict[str, Any] | None:
         """Map an SSIS connection-manager reference to a Fabric connection.
 
         .. deprecated:: Use :meth:`_resolve_connection_id` instead.
@@ -967,7 +976,7 @@ class DataFactoryGenerator:
 
         return f"{conn_name}  -- TODO: replace with Fabric connection id"
 
-    def _container_to_activity(self, task: ControlFlowTask, connections: list[ConnectionManager]) -> dict:
+    def _container_to_activity(self, task: ControlFlowTask, connections: list[ConnectionManager]) -> dict[str, Any]:
         """Convert Sequence Container to a group of activities."""
         child_activities = []
         for child in task.child_tasks:
@@ -994,7 +1003,7 @@ class DataFactoryGenerator:
             },
         }
 
-    def _for_loop_to_activity(self, task: ControlFlowTask, connections: list[ConnectionManager]) -> dict:
+    def _for_loop_to_activity(self, task: ControlFlowTask, connections: list[ConnectionManager]) -> dict[str, Any]:
         """Convert For Loop Container to Until activity."""
         child_activities = [self._task_to_activity(c, connections) for c in task.child_tasks]
         child_activities = [a for a in child_activities if a is not None]
@@ -1012,7 +1021,7 @@ class DataFactoryGenerator:
             },
         }
 
-    def _foreach_to_activity(self, task: ControlFlowTask, connections: list[ConnectionManager]) -> dict:
+    def _foreach_to_activity(self, task: ControlFlowTask, connections: list[ConnectionManager]) -> dict[str, Any]:
         """Convert ForEach Loop to ForEach activity."""
         child_activities = [self._task_to_activity(c, connections) for c in task.child_tasks]
         child_activities = [a for a in child_activities if a is not None]
@@ -1032,7 +1041,7 @@ class DataFactoryGenerator:
             },
         }
 
-    def _execute_package_to_activity(self, task: ControlFlowTask) -> dict:
+    def _execute_package_to_activity(self, task: ControlFlowTask) -> dict[str, Any]:
         """Convert Execute Package task to Invoke Pipeline activity.
 
         Includes parameter passing when the SSIS task has parameter bindings.
@@ -1099,7 +1108,7 @@ class DataFactoryGenerator:
 
         return activity
 
-    def _expression_to_set_variable(self, task: ControlFlowTask) -> dict:
+    def _expression_to_set_variable(self, task: ControlFlowTask) -> dict[str, Any]:
         """Convert Expression task to Set Variable activity."""
         return {
             "name": self._sanitize_name(task.name),
@@ -1113,7 +1122,7 @@ class DataFactoryGenerator:
             },
         }
 
-    def _execute_process_to_activity(self, task: ControlFlowTask) -> dict:
+    def _execute_process_to_activity(self, task: ControlFlowTask) -> dict[str, Any]:
         """Convert Execute Process task to an ExecutePipeline activity.
 
         SSIS Execute Process runs an external executable.  In Fabric there is
@@ -1135,7 +1144,7 @@ class DataFactoryGenerator:
             "description": (f"TODO: Replace with Fabric-native logic. Original SSIS Execute Process: {exe_path}"),
         }
 
-    def _send_mail_to_activity(self, task: ControlFlowTask) -> dict:
+    def _send_mail_to_activity(self, task: ControlFlowTask) -> dict[str, Any]:
         """Convert Send Mail task to an Office 365 Outlook activity.
 
         Fabric Data Factory supports the **Office365Outlook** activity type
@@ -1188,7 +1197,7 @@ class DataFactoryGenerator:
     # -----------------------------------------------------------------
     # FILE_SYSTEM task → Notebook / Script activity
     # -----------------------------------------------------------------
-    def _file_system_to_activity(self, task: ControlFlowTask) -> dict:
+    def _file_system_to_activity(self, task: ControlFlowTask) -> dict[str, Any]:
         """Convert SSIS File System task to a Fabric TridentNotebook activity.
 
         The notebook should contain mssparkutils.fs calls matching the
@@ -1228,7 +1237,7 @@ class DataFactoryGenerator:
     # -----------------------------------------------------------------
     # FTP task → Web / Copy activity
     # -----------------------------------------------------------------
-    def _ftp_to_activity(self, task: ControlFlowTask) -> dict:
+    def _ftp_to_activity(self, task: ControlFlowTask) -> dict[str, Any]:
         """Convert SSIS FTP task to a Fabric Copy or Web activity.
 
         FTP Send/Receive map to Copy activities; other operations
@@ -1276,7 +1285,7 @@ class DataFactoryGenerator:
             ),
         }
 
-    def _unknown_task_placeholder(self, task: ControlFlowTask) -> dict:
+    def _unknown_task_placeholder(self, task: ControlFlowTask) -> dict[str, Any]:
         """Create a placeholder for unsupported task types."""
         return {
             "name": self._sanitize_name(task.name),
@@ -1292,10 +1301,64 @@ class DataFactoryGenerator:
         }
 
     # =========================================================================
+    # Event Handler Conversion
+    # =========================================================================
+
+    def _event_handlers_to_activities(self, package: SSISPackage) -> list[dict[str, Any]]:
+        """Convert SSIS event handlers into Fabric pipeline failure-path activities.
+
+        SSIS ``OnError`` handlers become activities that depend on any other
+        activity's ``Failed`` condition.  ``OnPreExecute`` / ``OnPostExecute``
+        are noted but not auto-migrated (emitted as placeholder Wait
+        activities with TODO comments).
+        """
+        activities: list[dict[str, Any]] = []
+        if not package.event_handlers:
+            return activities
+
+        # Collect all top-level activity names for dependency wiring
+        top_names = [self._sanitize_name(t.name) for t in package.control_flow_tasks if not t.disabled]
+
+        for eh in package.event_handlers:
+            if eh.event_type == "OnError":
+                # Convert each task inside the error handler
+                for task in eh.tasks:
+                    act = self._task_to_activity(task, package.connection_managers)
+                    if act is None:
+                        continue
+                    act["name"] = self._sanitize_name(f"OnError_{task.name}")
+                    # Depend on all main activities with "Failed" condition
+                    act["dependsOn"] = [
+                        {"activity": name, "dependencyConditions": ["Failed"]}
+                        for name in top_names
+                    ]
+                    activities.append(act)
+            else:
+                # OnPreExecute, OnPostExecute, OnWarning, etc. — emit placeholder
+                act = {
+                    "name": self._sanitize_name(f"EventHandler_{eh.event_type}"),
+                    "type": "Wait",
+                    "typeProperties": {"waitTimeInSeconds": 1},
+                    "description": (
+                        f"TODO: SSIS {eh.event_type} event handler had "
+                        f"{len(eh.tasks)} task(s). Review and convert manually."
+                    ),
+                }
+                activities.append(act)
+
+        if activities:
+            logger.info(
+                "event_handlers_converted",
+                package=package.name,
+                count=len(activities),
+            )
+        return activities
+
+    # =========================================================================
     # Helpers
     # =========================================================================
 
-    def _package_params_to_df_params(self, package: SSISPackage) -> dict:
+    def _package_params_to_df_params(self, package: SSISPackage) -> dict[str, Any]:
         """Convert SSIS parameters (package + project) to ADF pipeline parameters."""
         params = {}
         # Project-level parameters
@@ -1312,7 +1375,7 @@ class DataFactoryGenerator:
             }
         return params
 
-    def _variables_to_df_variables(self, package: SSISPackage) -> dict:
+    def _variables_to_df_variables(self, package: SSISPackage) -> dict[str, Any]:
         """Convert SSIS variables to ADF pipeline variables."""
         variables: dict[str, Any] = {}
         for var in package.variables:

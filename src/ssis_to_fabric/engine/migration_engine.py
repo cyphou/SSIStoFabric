@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from ssis_to_fabric.analyzer.models import (
     ControlFlowTask,
@@ -76,7 +77,7 @@ class MigrationPlan:
     created_at: str = field(default_factory=lambda: datetime.now(tz=timezone.utc).isoformat())
     strategy: str = ""
     items: list[MigrationItem] = field(default_factory=list)
-    summary: dict = field(default_factory=dict)
+    summary: dict[str, Any] = field(default_factory=dict)
     errors: list[MigrationError] = field(default_factory=list)
 
     def add_error(self, source: str, severity: str, message: str, suggested_fix: str = "") -> None:
@@ -85,7 +86,7 @@ class MigrationPlan:
             MigrationError(source=source, severity=severity, message=message, suggested_fix=suggested_fix)
         )
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         items_list = []
         for item in self.items:
             items_list.append(
@@ -120,6 +121,83 @@ class MigrationPlan:
 
 
 # ---------------------------------------------------------------------------
+# Pre-migration assessment
+# ---------------------------------------------------------------------------
+
+# Effort weights per complexity level (person-hours per item)
+_EFFORT_WEIGHTS: dict[MigrationComplexity, float] = {
+    MigrationComplexity.LOW: 0.5,
+    MigrationComplexity.MEDIUM: 2.0,
+    MigrationComplexity.HIGH: 8.0,
+    MigrationComplexity.MANUAL: 16.0,
+}
+
+
+@dataclass
+class PackageAssessment:
+    """Assessment result for a single package."""
+
+    name: str
+    file_path: str
+    tasks: int
+    data_flows: int
+    connections: int
+    parameters: int
+    event_handlers: int
+    complexity: str
+    estimated_hours: float
+    auto_migrate_pct: float
+    risks: list[str] = field(default_factory=list)
+    unsupported_components: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AssessmentReport:
+    """Pre-migration assessment across all packages."""
+
+    project_name: str
+    total_packages: int = 0
+    total_tasks: int = 0
+    total_data_flows: int = 0
+    total_connections: int = 0
+    estimated_total_hours: float = 0.0
+    auto_migrate_pct: float = 0.0
+    readiness_score: int = 0  # 0–100
+    packages: list[PackageAssessment] = field(default_factory=list)
+    connection_inventory: list[dict[str, str]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "project_name": self.project_name,
+            "total_packages": self.total_packages,
+            "total_tasks": self.total_tasks,
+            "total_data_flows": self.total_data_flows,
+            "total_connections": self.total_connections,
+            "estimated_total_hours": round(self.estimated_total_hours, 1),
+            "auto_migrate_pct": round(self.auto_migrate_pct, 1),
+            "readiness_score": self.readiness_score,
+            "packages": [
+                {
+                    "name": p.name,
+                    "file_path": p.file_path,
+                    "tasks": p.tasks,
+                    "data_flows": p.data_flows,
+                    "connections": p.connections,
+                    "parameters": p.parameters,
+                    "event_handlers": p.event_handlers,
+                    "complexity": p.complexity,
+                    "estimated_hours": round(p.estimated_hours, 1),
+                    "auto_migrate_pct": round(p.auto_migrate_pct, 1),
+                    "risks": p.risks,
+                    "unsupported_components": p.unsupported_components,
+                }
+                for p in self.packages
+            ],
+            "connection_inventory": self.connection_inventory,
+        }
+
+
+# ---------------------------------------------------------------------------
 # Incremental migration helpers
 # ---------------------------------------------------------------------------
 
@@ -133,18 +211,18 @@ def _file_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _load_migration_state(state_dir: Path) -> dict:
+def _load_migration_state(state_dir: Path) -> dict[str, Any]:
     """Load the persisted migration state from ``.ssis2fabric/state.json``."""
     state_file = state_dir / _STATE_FILE
     if state_file.exists():
         try:
-            return json.loads(state_file.read_text(encoding="utf-8"))
+            return json.loads(state_file.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
         except (json.JSONDecodeError, OSError):
             return {}
     return {}
 
 
-def _save_migration_state(state_dir: Path, state: dict) -> None:
+def _save_migration_state(state_dir: Path, state: dict[str, Any]) -> None:
     """Persist migration state to ``.ssis2fabric/state.json``."""
     state_dir.mkdir(parents=True, exist_ok=True)
     state_file = state_dir / _STATE_FILE
@@ -475,7 +553,7 @@ class MigrationEngine:
                 return found
         return None
 
-    def _compute_summary(self, plan: MigrationPlan) -> dict:
+    def _compute_summary(self, plan: MigrationPlan) -> dict[str, Any]:
         """Compute summary statistics for the plan."""
         summary: dict[str, int] = {}
         for item in plan.items:
@@ -501,6 +579,129 @@ class MigrationEngine:
         logger.info("report_written", path=str(report_path))
 
     # =========================================================================
+    # Pre-Migration Assessment
+    # =========================================================================
+
+    def assess(self, packages: list[SSISPackage]) -> AssessmentReport:
+        """Perform a pre-migration readiness assessment.
+
+        Produces per-package effort estimates, risk flags, and an overall
+        readiness score (0–100) without generating any artifacts.
+        """
+        report = AssessmentReport(project_name=self.config.project_name)
+        report.total_packages = len(packages)
+
+        all_connections: dict[str, dict[str, str]] = {}
+        total_auto = 0
+        total_items = 0
+
+        for pkg in packages:
+            pkg_assessment = self._assess_package(pkg)
+            report.packages.append(pkg_assessment)
+            report.total_tasks += pkg_assessment.tasks
+            report.total_data_flows += pkg_assessment.data_flows
+            report.estimated_total_hours += pkg_assessment.estimated_hours
+
+            # Track automatable items
+            plan = self.create_plan([pkg])
+            auto = sum(
+                1 for item in plan.items
+                if item.target_artifact != TargetArtifact.MANUAL_REVIEW
+            )
+            total_auto += auto
+            total_items += len(plan.items)
+
+            # Collect connections
+            for cm in pkg.connection_managers:
+                if cm.name not in all_connections:
+                    all_connections[cm.name] = {
+                        "name": cm.name,
+                        "type": cm.connection_type.value,
+                        "server": cm.server,
+                        "database": cm.database,
+                    }
+
+        report.total_connections = len(all_connections)
+        report.connection_inventory = list(all_connections.values())
+        report.auto_migrate_pct = (total_auto / max(total_items, 1)) * 100
+
+        # Readiness score: 0–100 based on auto-migratable %, warnings, and complexity
+        risk_penalty = min(
+            30,
+            sum(len(p.risks) for p in report.packages) * 5,
+        )
+        report.readiness_score = max(0, min(100, int(report.auto_migrate_pct - risk_penalty)))
+
+        logger.info(
+            "assessment_completed",
+            packages=report.total_packages,
+            readiness=report.readiness_score,
+            estimated_hours=round(report.estimated_total_hours, 1),
+        )
+        return report
+
+    def _assess_package(self, package: SSISPackage) -> PackageAssessment:
+        """Assess a single SSIS package."""
+        risks: list[str] = []
+        unsupported: list[str] = []
+
+        # Gather all complexities and component types
+        def _walk_tasks(tasks: list[ControlFlowTask]) -> None:
+            for task in tasks:
+                if task.task_type == TaskType.SCRIPT:
+                    risks.append(f"Script Task '{task.name}' requires C# transpilation review")
+                for comp in task.data_flow_components:
+                    if comp.migration_complexity == MigrationComplexity.MANUAL:
+                        unsupported.append(f"{comp.component_type.value} in '{task.name}'")
+                    if comp.component_type == DataFlowComponentType.SCRIPT_COMPONENT:
+                        risks.append(f"Script Component in '{task.name}' needs manual review")
+                _walk_tasks(task.child_tasks)
+
+        _walk_tasks(package.control_flow_tasks)
+
+        if package.event_handlers:
+            for eh in package.event_handlers:
+                if eh.event_type != "OnError":
+                    risks.append(f"Event handler '{eh.event_type}' requires manual review")
+
+        if package.status == "partial":
+            risks.append("Package had parse warnings — review migration output")
+
+        # Estimate effort
+        effort = 0.0
+        for task in package.control_flow_tasks:
+            effort += self._estimate_task_effort(task)
+
+        # Auto-migrate percentage
+        plan = self.create_plan([package])
+        auto = sum(1 for i in plan.items if i.target_artifact != TargetArtifact.MANUAL_REVIEW)
+        auto_pct = (auto / max(len(plan.items), 1)) * 100
+
+        return PackageAssessment(
+            name=package.name,
+            file_path=package.file_path,
+            tasks=package.total_tasks,
+            data_flows=package.total_data_flows,
+            connections=len(package.connection_managers),
+            parameters=len(package.parameters) + len(package.project_parameters),
+            event_handlers=len(package.event_handlers),
+            complexity=package.overall_complexity.value,
+            estimated_hours=effort,
+            auto_migrate_pct=auto_pct,
+            risks=risks,
+            unsupported_components=unsupported,
+        )
+
+    def _estimate_task_effort(self, task: ControlFlowTask) -> float:
+        """Estimate effort in person-hours for a single task tree."""
+        effort = _EFFORT_WEIGHTS.get(task.migration_complexity, 1.0)
+        for comp in task.data_flow_components:
+            effort += _EFFORT_WEIGHTS.get(comp.migration_complexity, 0.5) * 0.5
+        for child in task.child_tasks:
+            effort += self._estimate_task_effort(child)
+        return effort
+
+    # =========================================================================
     # Connection Manifest Generation
     # =========================================================================
 
@@ -518,7 +719,7 @@ class MigrationEngine:
         ``fabric_target_type`` (``Warehouse`` for SQL connections,
         ``Lakehouse`` for file-based ones).
         """
-        seen: dict[str, dict] = {}
+        seen: dict[str, dict[str, Any]] = {}
         for pkg in packages:
             for cm in pkg.connection_managers:
                 if cm.name in seen:

@@ -18,7 +18,7 @@ Usage::
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ssis_to_fabric.analyzer.dtsx_parser import DTSXParser
 from ssis_to_fabric.config import (
@@ -98,7 +98,7 @@ class SSISMigrator:
         self._engine = MigrationEngine(self._config)
 
     @classmethod
-    def from_config(cls, config: MigrationConfig, **overrides) -> SSISMigrator:
+    def from_config(cls, config: MigrationConfig, **overrides: Any) -> SSISMigrator:
         """
         Create a migrator from an existing :class:`MigrationConfig`.
 
@@ -193,6 +193,27 @@ class SSISMigrator:
         return self._engine.create_plan(packages)
 
     # ------------------------------------------------------------------
+    # 2b. Assess
+    # ------------------------------------------------------------------
+
+    def assess(self, path: str | Path) -> Any:
+        """Pre-migration readiness assessment with effort estimates.
+
+        Parameters
+        ----------
+        path : str or Path
+            SSIS package file or project directory.
+
+        Returns
+        -------
+        AssessmentReport
+            Assessment with readiness score, per-package effort estimates,
+            risk flags, and connection inventory.
+        """
+        packages = self.analyze(path)
+        return self._engine.assess(packages)
+
+    # ------------------------------------------------------------------
     # 3. Migrate
     # ------------------------------------------------------------------
 
@@ -219,6 +240,13 @@ class SSISMigrator:
             ``output_path`` pointing to generated files.
         """
         packages = self.analyze(path)
+        if self._config.parallel_workers > 1:
+            from ssis_to_fabric.engine.agents import AgentOrchestrator
+
+            orchestrator = AgentOrchestrator(
+                self._config, max_workers=self._config.parallel_workers,
+            )
+            return orchestrator.run(packages, plan=plan)
         return self._engine.execute(packages, plan=plan)
 
     # ------------------------------------------------------------------
@@ -288,7 +316,7 @@ class SSISMigrator:
         self,
         baseline_dir: str | Path,
         output_dir: str | Path | None = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """
         Run non-regression validation against approved baselines.
 
@@ -310,6 +338,37 @@ class SSISMigrator:
         out = Path(output_dir) if output_dir else self._config.output_dir
         runner = RegressionRunner(self._config)
         return runner.run_file_comparison(Path(baseline_dir), out)
+
+    # ------------------------------------------------------------------
+    # 6. Provision Lakehouse DDL
+    # ------------------------------------------------------------------
+
+    def provision_schema(
+        self,
+        output_dir: str | Path | None = None,
+        *,
+        dialect: str = "spark",
+    ) -> list[Path]:
+        """Generate Lakehouse / Warehouse DDL from destination manifests.
+
+        Parameters
+        ----------
+        output_dir : str or Path, optional
+            Directory containing ``*.destinations.json`` sidecar files.
+            Defaults to ``self.output_dir``.
+        dialect : str
+            ``"spark"`` (default) or ``"sql"``.
+
+        Returns
+        -------
+        list[Path]
+            Paths to the generated ``.sql`` files.
+        """
+        from ssis_to_fabric.engine.lakehouse_provisioner import LakehouseProvisioner
+
+        out = Path(output_dir) if output_dir else self._config.output_dir
+        provisioner = LakehouseProvisioner(dialect=dialect)
+        return provisioner.provision(out)
 
     # ------------------------------------------------------------------
     # Convenience: full pipeline

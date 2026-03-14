@@ -399,21 +399,23 @@ class DTSXParser:
                     break
         return nsmap
 
-    def _get_dts_attr(self, elem: etree._Element, attr_name: str, nsmap: dict) -> str | None:
+    def _get_dts_attr(self, elem: etree._Element, attr_name: str, nsmap: dict[str, str]) -> str | None:
         """Get a DTS-namespaced attribute value."""
         dts_ns = nsmap.get("DTS", "www.microsoft.com/SqlServer/Dts")
-        return elem.get(f"{{{dts_ns}}}{attr_name}")
+        val: str | None = elem.get(f"{{{dts_ns}}}{attr_name}")
+        return val
 
-    def _find_dts(self, parent: etree._Element, tag: str, nsmap: dict) -> list[etree._Element]:
+    def _find_dts(self, parent: etree._Element, tag: str, nsmap: dict[str, str]) -> list[etree._Element]:
         """Find child elements with DTS namespace."""
         dts_ns = nsmap.get("DTS", "www.microsoft.com/SqlServer/Dts")
-        return parent.findall(f"{{{dts_ns}}}{tag}")
+        result: list[etree._Element] = parent.findall(f"{{{dts_ns}}}{tag}")
+        return result
 
     # =========================================================================
     # Connection Managers
     # =========================================================================
 
-    def _parse_connection_managers(self, root: etree._Element, nsmap: dict) -> list[ConnectionManager]:
+    def _parse_connection_managers(self, root: etree._Element, nsmap: dict[str, str]) -> list[ConnectionManager]:
         """Parse all connection managers from the package.
 
         DTSX files nest ``<DTS:ConnectionManager>`` elements inside a
@@ -438,7 +440,7 @@ class DTSXParser:
                 managers.append(cm)
         return managers
 
-    def _parse_single_connection_manager(self, elem: etree._Element, nsmap: dict) -> ConnectionManager | None:
+    def _parse_single_connection_manager(self, elem: etree._Element, nsmap: dict[str, str]) -> ConnectionManager | None:
         """Parse a single connection manager element."""
         name = self._get_dts_attr(elem, "ObjectName", nsmap) or "Unknown"
         creation_name = self._get_dts_attr(elem, "CreationName", nsmap) or ""
@@ -513,7 +515,7 @@ class DTSXParser:
     # Variables & Parameters
     # =========================================================================
 
-    def _parse_variables(self, root: etree._Element, nsmap: dict) -> list[Variable]:
+    def _parse_variables(self, root: etree._Element, nsmap: dict[str, str]) -> list[Variable]:
         """Parse package-level variables."""
         variables = []
         for var_elem in self._find_dts(root, "Variable", nsmap):
@@ -542,7 +544,7 @@ class DTSXParser:
             )
         return variables
 
-    def _parse_parameters(self, root: etree._Element, nsmap: dict) -> list[Variable]:
+    def _parse_parameters(self, root: etree._Element, nsmap: dict[str, str]) -> list[Variable]:
         """Parse package parameters (SSIS 2012+).
 
         Handles both:
@@ -593,7 +595,7 @@ class DTSXParser:
     # Control Flow Tasks (Executables)
     # =========================================================================
 
-    def _parse_executables(self, parent: etree._Element, nsmap: dict) -> list[ControlFlowTask]:
+    def _parse_executables(self, parent: etree._Element, nsmap: dict[str, str]) -> list[ControlFlowTask]:
         """Parse executable elements (tasks and containers)."""
         tasks = []
         # Find Executables container
@@ -604,7 +606,7 @@ class DTSXParser:
                     tasks.append(task)
         return tasks
 
-    def _parse_single_executable(self, elem: etree._Element, nsmap: dict) -> ControlFlowTask | None:
+    def _parse_single_executable(self, elem: etree._Element, nsmap: dict[str, str]) -> ControlFlowTask | None:
         """Parse a single executable element into a ControlFlowTask."""
         name = self._get_dts_attr(elem, "ObjectName", nsmap) or "Unknown"
         creation_name = self._get_dts_attr(elem, "CreationName", nsmap) or ""
@@ -657,7 +659,7 @@ class DTSXParser:
                 return task_type
         return TaskType.UNKNOWN
 
-    def _parse_execute_sql(self, elem: etree._Element, task: ControlFlowTask, nsmap: dict) -> None:
+    def _parse_execute_sql(self, elem: etree._Element, task: ControlFlowTask, nsmap: dict[str, str]) -> None:
         """Extract SQL statement and parameter bindings from Execute SQL task."""
         for obj_data in self._find_dts(elem, "ObjectData", nsmap):
             for child in obj_data:
@@ -709,7 +711,7 @@ class DTSXParser:
                             )
                         )
 
-    def _parse_execute_package(self, elem: etree._Element, task: ControlFlowTask, nsmap: dict) -> None:
+    def _parse_execute_package(self, elem: etree._Element, task: ControlFlowTask, nsmap: dict[str, str]) -> None:
         """Extract package reference from Execute Package task."""
         for obj_data in self._find_dts(elem, "ObjectData", nsmap):
             for child in obj_data:
@@ -733,7 +735,7 @@ class DTSXParser:
                         if param_name and variable_name:
                             task.parameter_bindings[param_name] = variable_name
 
-    def _parse_data_flow(self, elem: etree._Element, task: ControlFlowTask, nsmap: dict) -> None:
+    def _parse_data_flow(self, elem: etree._Element, task: ControlFlowTask, nsmap: dict[str, str]) -> None:
         """Parse a Data Flow task's components and paths."""
         for obj_data in self._find_dts(elem, "ObjectData", nsmap):
             for pipeline in obj_data:
@@ -759,7 +761,7 @@ class DTSXParser:
                         if path:
                             task.data_flow_paths.append(path)
 
-    def _parse_data_flow_component(self, elem: etree._Element, nsmap: dict) -> DataFlowComponent | None:
+    def _parse_data_flow_component(self, elem: etree._Element, nsmap: dict[str, str]) -> DataFlowComponent | None:
         """Parse a data flow component element."""
         name = elem.get("name", "") or elem.get("Name", "") or "Unknown"
         class_id = elem.get("componentClassID", "") or elem.get("ComponentClassID", "")
@@ -1028,7 +1030,7 @@ class DTSXParser:
     # Precedence Constraints
     # =========================================================================
 
-    def _parse_precedence_constraints(self, root: etree._Element, nsmap: dict) -> list[PrecedenceConstraint]:
+    def _parse_precedence_constraints(self, root: etree._Element, nsmap: dict[str, str]) -> list[PrecedenceConstraint]:
         """Parse precedence constraints from the package."""
         constraints = []
         for pc_container in self._find_dts(root, "PrecedenceConstraints", nsmap):
@@ -1060,7 +1062,7 @@ class DTSXParser:
     # Event Handlers
     # =========================================================================
 
-    def _parse_event_handlers(self, root: etree._Element, nsmap: dict) -> list[EventHandler]:
+    def _parse_event_handlers(self, root: etree._Element, nsmap: dict[str, str]) -> list[EventHandler]:
         """Parse event handlers from the package."""
         handlers = []
         for eh_container in self._find_dts(root, "EventHandlers", nsmap):
@@ -1074,7 +1076,7 @@ class DTSXParser:
     # Complexity Assessment
     # =========================================================================
 
-    def _parse_send_mail(self, elem: etree._Element, task: ControlFlowTask, nsmap: dict) -> None:
+    def _parse_send_mail(self, elem: etree._Element, task: ControlFlowTask, nsmap: dict[str, str]) -> None:
         """Extract email properties from Send Mail task."""
         for obj_data in self._find_dts(elem, "ObjectData", nsmap):
             for child in obj_data:
@@ -1108,7 +1110,7 @@ class DTSXParser:
     # -----------------------------------------------------------------
     # ForEach Loop enumerator parsing
     # -----------------------------------------------------------------
-    def _parse_foreach_enumerator(self, elem: etree._Element, task: ControlFlowTask, nsmap: dict) -> None:
+    def _parse_foreach_enumerator(self, elem: etree._Element, task: ControlFlowTask, nsmap: dict[str, str]) -> None:
         """Extract ForEach enumerator type and configuration."""
         # The ForEachEnumerator sits inside <DTS:ForEachEnumerator> or
         # as an <DTS:ObjectData> inside a <ForEachEnumerator> child.
@@ -1172,7 +1174,7 @@ class DTSXParser:
     # -----------------------------------------------------------------
     # File System task parsing
     # -----------------------------------------------------------------
-    def _parse_file_system(self, elem: etree._Element, task: ControlFlowTask, nsmap: dict) -> None:
+    def _parse_file_system(self, elem: etree._Element, task: ControlFlowTask, nsmap: dict[str, str]) -> None:
         """Extract File System task properties."""
         for obj_data in self._find_dts(elem, "ObjectData", nsmap):
             for child in obj_data:
@@ -1209,7 +1211,7 @@ class DTSXParser:
     # -----------------------------------------------------------------
     # FTP task parsing
     # -----------------------------------------------------------------
-    def _parse_ftp(self, elem: etree._Element, task: ControlFlowTask, nsmap: dict) -> None:
+    def _parse_ftp(self, elem: etree._Element, task: ControlFlowTask, nsmap: dict[str, str]) -> None:
         """Extract FTP task properties."""
         for obj_data in self._find_dts(elem, "ObjectData", nsmap):
             for child in obj_data:

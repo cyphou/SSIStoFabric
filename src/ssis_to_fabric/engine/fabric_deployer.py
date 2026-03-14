@@ -18,7 +18,7 @@ import json
 import random
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import requests
 import structlog
@@ -73,6 +73,35 @@ class DeploymentReport:
     def skipped(self) -> int:
         return sum(1 for r in self.results if r.status == "skipped")
 
+    @property
+    def created_item_ids(self) -> list[tuple[str, str, str]]:
+        """Return ``(item_id, item_type, name)`` for all successfully created items."""
+        return [
+            (r.item_id, r.item_type, r.name)
+            for r in self.results
+            if r.status == "success" and r.item_id
+        ]
+
+    def rollback(self, deployer: FabricDeployer) -> tuple[int, int]:
+        """Delete all items that were successfully created in this report.
+
+        Returns ``(deleted, errors)`` counts.
+        """
+        items = self.created_item_ids
+        if not items:
+            return 0, 0
+        logger.info("rollback_start", items=len(items))
+        deleted = 0
+        errors = 0
+        for item_id, item_type, name in items:
+            ok = deployer.delete_item(item_id, item_type, name)
+            if ok:
+                deleted += 1
+            else:
+                errors += 1
+        logger.info("rollback_complete", deleted=deleted, errors=errors)
+        return deleted, errors
+
 
 class FabricDeployer:
     """
@@ -97,7 +126,7 @@ class FabricDeployer:
         self.default_connection_id = default_connection_id
         self._token: str | None = None
         self._credential = credential
-        self._existing_items: dict[str, dict] | None = None
+        self._existing_items: dict[str, dict[str, Any]] | None = None
         # Populated by Phase 0 — maps SSIS conn name → Fabric connection GUID
         self._connection_map: dict[str, str] = {}
         # Populated by Phase 0.5 — maps pipeline_name → folder_id
@@ -163,7 +192,7 @@ class FabricDeployer:
 
                     self._credential = DeviceCodeCredential()
 
-        token = self._credential.get_token(FABRIC_SCOPE)  # type: ignore[union-attr]
+        token = self._credential.get_token(FABRIC_SCOPE)  # type: ignore[attr-defined]
         self._token = token.token
         logger.info("fabric_auth_success", scope=FABRIC_SCOPE)
 
@@ -219,7 +248,7 @@ class FabricDeployer:
             return
 
         # Read all connection manifests
-        connections: list[dict] = []
+        connections: list[dict[str, Any]] = []
         for mf in manifests:
             try:
                 data = json.loads(mf.read_text(encoding="utf-8"))
@@ -369,7 +398,7 @@ class FabricDeployer:
                     server=server,
                     database=database,
                 )
-                return new_id
+                return str(new_id) if new_id else None
 
             logger.warning(
                 "sql_connection_create_failed",
@@ -401,7 +430,7 @@ class FabricDeployer:
         method: str,
         url: str,
         *,
-        json_body: dict | None = None,
+        json_body: dict[str, Any] | None = None,
         retries: int = MAX_RETRIES,
     ) -> requests.Response:
         """Make an API call with exponential backoff for 429 and 5xx errors.
@@ -484,9 +513,9 @@ class FabricDeployer:
     # Existing items check
     # ------------------------------------------------------------------
 
-    def _load_existing_items(self) -> dict[str, dict]:
+    def _load_existing_items(self) -> dict[str, dict[str, Any]]:
         """Fetch all items in the workspace to detect duplicates."""
-        items: dict[str, dict] = {}
+        items: dict[str, dict[str, Any]] = {}
         url = f"{FABRIC_API_BASE}/workspaces/{self.workspace_id}/items"
         while url:
             resp = self._api_call("GET", url)
@@ -506,7 +535,7 @@ class FabricDeployer:
             self._existing_items = self._load_existing_items()
         return f"{item_type}::{display_name}" in self._existing_items
 
-    def list_workspace_items(self) -> list[dict]:
+    def list_workspace_items(self) -> list[dict[str, Any]]:
         """Public API: return all workspace items as a list of dicts.
 
         Each dict has at least: id, type, displayName.
@@ -611,7 +640,7 @@ class FabricDeployer:
         body = {"displayName": folder_name}
         resp = self._api_call("POST", url, json_body=body)
         if resp.status_code in (200, 201):
-            folder_id = resp.json().get("id", "")
+            folder_id: str = resp.json().get("id", "")
             existing[folder_name] = folder_id
             logger.info("folder_created", name=folder_name, folder_id=folder_id)
             return folder_id
@@ -731,14 +760,14 @@ class FabricDeployer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _py_to_ipynb(py_content: str) -> dict:
+    def _py_to_ipynb(py_content: str) -> dict[str, Any]:
         """Convert a Python script into a Jupyter ipynb notebook JSON structure.
 
         Splits on `# --- <section> ---` markers into separate code cells.
         """
         # Split content into logical cells based on section markers
         lines = py_content.split("\n")
-        cells: list[dict] = []
+        cells: list[dict[str, Any]] = []
         current_cell: list[str] = []
 
         for line in lines:
@@ -1472,18 +1501,18 @@ class FabricDeployer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _has_copy_activity(pipeline_json: dict) -> bool:
+    def _has_copy_activity(pipeline_json: dict[str, Any]) -> bool:
         """Check if a pipeline contains Copy activities (need manual connection config)."""
         return any(act.get("type") == "Copy" for act in pipeline_json.get("properties", {}).get("activities", []))
 
     @staticmethod
-    def _has_script_activity(pipeline_json: dict) -> bool:
+    def _has_script_activity(pipeline_json: dict[str, Any]) -> bool:
         """Check if a pipeline contains Script or SqlServerStoredProcedure activities."""
         sql_types = {"Script", "SqlServerStoredProcedure"}
         return any(act.get("type") in sql_types for act in pipeline_json.get("properties", {}).get("activities", []))
 
     @staticmethod
-    def _has_cross_references(pipeline_json: dict) -> bool:
+    def _has_cross_references(pipeline_json: dict[str, Any]) -> bool:
         """Check if pipeline references other pipelines, notebooks, or dataflows."""
         for act in pipeline_json.get("properties", {}).get("activities", []):
             atype = act.get("type", "")
@@ -1675,3 +1704,237 @@ class FabricDeployer:
             skipped=report.skipped,
         )
         return report
+
+    # ------------------------------------------------------------------
+    # Parallel deployment
+    # ------------------------------------------------------------------
+
+    def _deploy_batch_parallel(
+        self,
+        items: list[tuple[str, Path]],
+        deploy_fn: str,
+        *,
+        max_workers: int = 3,
+    ) -> list[DeploymentResult]:
+        """Deploy a batch of items in parallel with rate-limit throttling.
+
+        Parameters
+        ----------
+        items:
+            List of ``(label, path)`` tuples.
+        deploy_fn:
+            Name of the method to call: ``"deploy_dataflow"``,
+            ``"deploy_notebook"``, or ``"deploy_pipeline"``.
+        max_workers:
+            Maximum concurrent deployment threads.
+        """
+        import threading
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        fn = getattr(self, deploy_fn)
+        semaphore = threading.Semaphore(max_workers)
+        results: list[DeploymentResult] = []
+        lock = threading.Lock()
+
+        def _deploy_one(path: Path) -> DeploymentResult:
+            semaphore.acquire()
+            try:
+                result: DeploymentResult = fn(path)
+                self._move_result_to_folder(result)
+                return result
+            finally:
+                semaphore.release()
+
+        with ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="deploy",
+        ) as pool:
+            futures = {
+                pool.submit(_deploy_one, path): label
+                for label, path in items
+            }
+            for future in as_completed(futures):
+                result = future.result()
+                with lock:
+                    results.append(result)
+
+        return results
+
+    def deploy_all_parallel(
+        self,
+        output_dir: Path,
+        *,
+        max_workers: int = 3,
+        on_error: str = "continue",
+    ) -> DeploymentReport:
+        """Deploy all artifacts with within-phase parallelism.
+
+        Same phase ordering as ``deploy_all`` but each phase deploys its
+        items concurrently (bounded by *max_workers*).
+
+        Parameters
+        ----------
+        max_workers:
+            Maximum concurrent API requests within a phase (default 3).
+        on_error:
+            ``"continue"`` (default) — keep deploying after errors.
+            ``"rollback"`` — delete all items created so far and abort.
+        """
+        report = DeploymentReport(workspace_id=self.workspace_id)
+
+        self._resolve_connections(output_dir)
+        self._precreate_folders(output_dir)
+
+        def _check_rollback() -> bool:
+            if on_error == "rollback" and report.failed > 0:
+                logger.warning("rollback_triggered", failed=report.failed)
+                report.rollback(self)
+                return True
+            return False
+
+        # Phase 1a: Dataflows
+        dataflows_dir = output_dir / "dataflows"
+        if dataflows_dir.exists():
+            items = [
+                (f.stem, f)
+                for f in sorted(dataflows_dir.glob("*.json"))
+                if not f.name.endswith(".destinations.json")
+            ]
+            if items:
+                logger.info("parallel_phase1a", count=len(items), workers=max_workers)
+                batch_results = self._deploy_batch_parallel(
+                    items, "deploy_dataflow", max_workers=max_workers,
+                )
+                report.results.extend(batch_results)
+                if _check_rollback():
+                    return report
+
+        # Phase 1b: Notebooks
+        notebooks_dir = output_dir / "notebooks"
+        if notebooks_dir.exists():
+            items = [(f.stem, f) for f in sorted(notebooks_dir.glob("*.py"))]
+            if items:
+                logger.info("parallel_phase1b", count=len(items), workers=max_workers)
+                batch_results = self._deploy_batch_parallel(
+                    items, "deploy_notebook", max_workers=max_workers,
+                )
+                report.results.extend(batch_results)
+                if _check_rollback():
+                    return report
+
+        # Phase 1c-1d + 2 + 3: Pipelines remain sequential (ordering deps)
+        pipelines_dir = output_dir / "pipelines"
+        if pipelines_dir.exists():
+            pipeline_files = sorted(pipelines_dir.glob("*.json"))
+            leaf_pipelines: list[Path] = []
+            ref_pipelines: list[Path] = []
+
+            for pf in pipeline_files:
+                data = json.loads(pf.read_text(encoding="utf-8"))
+                if self._has_cross_references(data) or self._has_copy_activity(data):
+                    ref_pipelines.append(pf)
+                else:
+                    leaf_pipelines.append(pf)
+
+            # Leaf pipelines can be deployed in parallel
+            if leaf_pipelines:
+                items = [(f.stem, f) for f in leaf_pipelines]
+                logger.info("parallel_phase1c", count=len(items), workers=max_workers)
+                batch_results = self._deploy_batch_parallel(
+                    items, "deploy_pipeline", max_workers=max_workers,
+                )
+                report.results.extend(batch_results)
+                if _check_rollback():
+                    return report
+
+            # Referencing pipelines: create shells → update definitions (sequential)
+            for pf in ref_pipelines:
+                result = self._create_empty_pipeline(pf.stem)
+                self._move_result_to_folder(result)
+                if not self.dry_run:
+                    time.sleep(1)
+
+            self._existing_items = None
+            if not self.dry_run:
+                self._existing_items = self._load_existing_items()
+
+            for pf in ref_pipelines:
+                result = self._update_pipeline_definition(pf.stem, pf)
+                report.results.append(result)
+                if _check_rollback():
+                    return report
+
+        if not self.dry_run:
+            try:
+                self._move_remaining_to_folders()
+            except Exception as e:
+                logger.warning("folder_organization_failed", error=str(e))
+
+        logger.info(
+            "parallel_deployment_complete",
+            total=report.total,
+            succeeded=report.succeeded,
+            failed=report.failed,
+        )
+        return report
+
+    # ------------------------------------------------------------------
+    # Post-deployment verification
+    # ------------------------------------------------------------------
+
+    def post_deploy_check(
+        self,
+        report: DeploymentReport,
+        *,
+        max_polls: int = 5,
+        poll_interval: float = 2.0,
+    ) -> list[dict[str, str]]:
+        """Verify that all successfully deployed items are accessible.
+
+        Polls the workspace items list up to *max_polls* times with
+        exponential backoff, checking that each item in *report* appears.
+
+        Returns a list of ``{"name", "type", "status", "detail"}`` dicts.
+        """
+        expected = [
+            (r.name, r.item_type)
+            for r in report.results
+            if r.status == "success"
+        ]
+        if not expected or self.dry_run:
+            return [
+                {"name": n, "type": t, "status": "skipped", "detail": "dry-run"}
+                for n, t in expected
+            ]
+
+        found: set[tuple[str, str]] = set()
+        for attempt in range(max_polls):
+            ws_items = self._load_existing_items()
+            for name, item_type in expected:
+                key = f"{item_type}::{name}"
+                if key in ws_items:
+                    found.add((name, item_type))
+            if len(found) == len(expected):
+                break
+            delay = poll_interval * (2 ** attempt)
+            logger.info(
+                "verify_poll",
+                attempt=attempt + 1,
+                found=len(found),
+                expected=len(expected),
+                delay=delay,
+            )
+            time.sleep(delay)
+
+        results: list[dict[str, str]] = []
+        for name, item_type in expected:
+            if (name, item_type) in found:
+                results.append({"name": name, "type": item_type, "status": "ok", "detail": ""})
+            else:
+                results.append({
+                    "name": name,
+                    "type": item_type,
+                    "status": "missing",
+                    "detail": "Not found after polling",
+                })
+        return results

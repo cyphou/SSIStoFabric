@@ -1,0 +1,61 @@
+{
+  "name": "UsingVariables",
+  "properties": {
+    "activities": [
+      {
+        "name": "GetFileNames",
+        "type": "ForEach",
+        "typeProperties": {
+          "isSequential": true,
+          "items": {
+            "value": "@activity('ListFiles').output.childItems  /* TODO: configure GetMetadata source */",
+            "type": "Expression"
+          },
+          "activities": [
+            {
+              "name": "ReadOnlyVariables",
+              "type": "TridentNotebook",
+              "typeProperties": {
+                "notebookId": "",
+                "workspaceId": ""
+              }
+            }
+          ]
+        },
+        "dependsOn": [
+          {
+            "activity": "LoopThreeTimes",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "LoopThreeTimes",
+        "type": "Until",
+        "typeProperties": {
+          "expression": {
+            "value": "@bool(true)",
+            "type": "Expression"
+          },
+          "activities": [
+            {
+              "name": "VariableDispenser",
+              "type": "TridentNotebook",
+              "typeProperties": {
+                "notebookId": "",
+                "workspaceId": ""
+              }
+            }
+          ],
+          "timeout": "0.01:00:00"
+        }
+      }
+    ],
+    "annotations": [
+      "migrated-from-ssis",
+      "generated-20260314"
+    ]
+  }
+}
