@@ -12,12 +12,12 @@
 
 <p align="center">
   <a href="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml"><img src="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-  <img src="https://img.shields.io/badge/tests-1507%20passed-brightgreen?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-1508%20passed-brightgreen?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"/>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"/>
   <img src="https://img.shields.io/badge/version-4.0.0-blue?style=flat-square" alt="Version"/>
-  <img src="https://img.shields.io/badge/pipelines-28-orange?style=flat-square" alt="Pipelines"/>
-  <img src="https://img.shields.io/badge/notebooks-28-orange?style=flat-square" alt="Notebooks"/>
+  <img src="https://img.shields.io/badge/CLI%20commands-30-orange?style=flat-square" alt="CLI Commands"/>
+  <img src="https://img.shields.io/badge/engine%20modules-29-orange?style=flat-square" alt="Engine Modules"/>
 </p>
 
 <p align="center">
@@ -107,55 +107,71 @@ migrator.run("path/to/ssis_project/", workspace_id="<workspace-guid>", clean=Tru
 <tr>
 <td width="50%">
 
-### 🔄 28+ SSIS Components
+### 🔄 30+ SSIS Components
 Parses control flow & data flow tasks:
-Execute SQL, Execute Package, ForEach/For Loop, Sequence Containers, Data Flow (OLE DB, Flat File, Excel, ODBC, XML, CDC), Script Components, File System, FTP, Send Mail
+Execute SQL, Execute Package, ForEach/For Loop, Sequence Containers, Data Flow (OLE DB, Flat File, Excel, ODBC, XML, CDC), Script Components, File System, FTP, Send Mail, WMI, WebService, XML Task
 
 </td>
 <td width="50%">
 
 ### ⚡ Expression Transpiler
 Converts SSIS expressions to both targets:
-Power Query M (`Text.Upper`, `DateTime.LocalNow`) and PySpark (`F.upper`, `F.current_timestamp`) — 40+ patterns including DATEADD, DATEDIFF, type casts, string ops
+Power Query M (`Text.Upper`, `DateTime.LocalNow`) and PySpark (`F.upper`, `F.current_timestamp`) — 50+ patterns including DATEADD, DATEDIFF, type casts, string ops, bitwise, trig/math
 
 </td>
 </tr>
 <tr>
 <td>
 
-### 🔌 12 Connection Types
-Handles all major SSIS connections:
-OLEDB, ADO.NET, Flat File, Excel, ODBC, FTP, HTTP, FILE, SMTP, Oracle, SharePoint, Analysis Services — auto-mapped to Fabric connections
+### 🔌 14+ Connector Types
+Handles all major SSIS connections plus enterprise sources:
+OLEDB, ADO.NET, Flat File, Excel, ODBC, FTP, HTTP, Oracle, SAP, Salesforce, Teradata, DB2, S3, GCS, BigQuery, REST API — auto-mapped to Fabric connections & OneLake shortcuts
 
 </td>
 <td>
 
 ### 🚀 Multi-Phase Deployment
 Automated deployment to Fabric:
-Connection resolution → Folder creation → Dataflows → Notebooks → Leaf pipelines → Orchestrators — with dependency ordering & dry-run support
+Connection resolution → Folder creation → Dataflows → Notebooks → Leaf pipelines → Orchestrators — with blue-green deployment, rollback & dry-run support
 
 </td>
 </tr>
 <tr>
 <td>
 
-### 🧠 Smart Routing
-Three migration strategies:
-**Hybrid** (default) routes simple flows to Dataflow Gen2, complex to Spark. **Data Factory** for pipeline-only. **Spark** for transformation-heavy packages.
+### 🧠 Smart Routing + AI Analysis
+Three migration strategies plus intelligent analysis:
+**Hybrid** (default) routes simple flows to Dataflow Gen2, complex to Spark. AI pattern recognition auto-classifies packages and recommends optimal strategies.
 
 </td>
 <td>
 
-### 📋 Destination Sidecars
-Every dataflow/notebook gets a `.destinations.json`:
-Target table, column names, data types — enabling downstream Lakehouse provisioning without parsing M/PySpark code.
+### 🛡️ Enterprise Governance
+Full governance and compliance framework:
+Policy rules, deployment gates, environment promotion (dev→staging→prod), data classification (PII/PHI/financial), RBAC, multi-tenant support.
+
+</td>
+</tr>
+<tr>
+<td>
+
+### 📊 Data Quality & Profiling
+Pre/post-migration data validation:
+Column profiling, validation rules (not-null, unique, range, regex), risk scoring, row count reconciliation, quality reports.
+
+</td>
+<td>
+
+### 📦 GitOps & Versioning
+Artifact lifecycle management:
+Branch-per-migration, artifact diffing, change tracking, git-sync, `.fabricignore` support, SQL Agent schedule extraction.
 
 </td>
 </tr>
 </table>
 
 > [!NOTE]
-> **28 pipelines** and **28 notebooks** generated from the included real SSIS example projects (MIT licensed).
+> **30 CLI commands**, **29 engine modules**, and **1508 tests** — migrating SSIS packages from the included real example projects (MIT licensed).
 
 ---
 
@@ -211,23 +227,45 @@ SSISToFabric/
 │   ├── analyzer/                       # SSIS package parsing
 │   │   ├── models.py                  #   Data models (SSISPackage, Variable, Task, etc.)
 │   │   └── dtsx_parser.py            #   .dtsx XML parser + Project.params reader
-│   ├── engine/                         # Migration generators
+│   ├── engine/                         # 29 migration & analysis modules
 │   │   ├── migration_engine.py        #   Orchestration, routing & plan generation
 │   │   ├── data_factory_generator.py  #   ADF pipeline JSON generation
 │   │   ├── dataflow_generator.py      #   Dataflow Gen2 (Power Query M) + expression transpiler
 │   │   ├── spark_generator.py         #   PySpark notebook + expression transpiler
+│   │   ├── expression_transpiler.py   #   Unified expression transpiler facade
 │   │   ├── fabric_deployer.py         #   Fabric REST API deployment & folder organization
-│   │   └── ssisdb_extractor.py        #   SSISDB catalog .dtsx extraction (pyodbc)
+│   │   ├── ssisdb_extractor.py        #   SSISDB catalog .dtsx extraction
+│   │   ├── csharp_transpiler.py       #   C# Script Task → Python transpiler
+│   │   ├── script_transpiler.py       #   AST-based C# parser, .NET BCL mapping, LINQ → PySpark
+│   │   ├── lineage.py                 #   Table-level data lineage graph builder
+│   │   ├── column_lineage.py          #   Column-level lineage DAG & impact analysis
+│   │   ├── report_generator.py        #   HTML/SVG migration report
+│   │   ├── lakehouse_provisioner.py   #   DDL generation for Lakehouse/Warehouse
+│   │   ├── agents.py                  #   Multi-agent parallel orchestration
+│   │   ├── plugin_registry.py         #   Component handler registry & hook system
+│   │   ├── deployment_hardening.py    #   Blue-green deploy, rollback, state machine
+│   │   ├── enterprise.py              #   RBAC, multi-tenant, cost estimation
+│   │   ├── integrations.py            #   Key Vault, Power BI, dbt, Slack/Teams
+│   │   ├── developer_experience.py    #   JSON Schema, decision tree wizard
+│   │   ├── data_quality.py            #   Column profiling, validation rules, risk scoring
+│   │   ├── gitops.py                  #   Git-sync, artifact versioning, .fabricignore
+│   │   ├── web_dashboard.py           #   REST API definitions, SSE progress, dashboard HTML
+│   │   ├── streaming.py               #   Event Hub/Kafka/CDC detection, Eventstream gen
+│   │   ├── orchestration.py           #   Schedule extraction, Airflow/Logic Apps adapters
+│   │   ├── policy_engine.py           #   Governance rules, deployment gates, PII detection
+│   │   ├── performance.py             #   Migration profiler, Spark optimizer, capacity tuning
+│   │   ├── connectors.py              #   Enterprise connectors (SAP/Oracle/S3/etc.)
+│   │   ├── intelligence.py            #   AI pattern recognition, NL queries, auto tests
+│   │   └── utils.py                   #   Shared generator utilities
 │   ├── testing/                        # Test framework
 │   │   └── regression_runner.py       #   Non-regression baseline validation
-│   ├── cli.py                          # CLI entry point (ssis2fabric)
+│   ├── cli.py                          # 30 CLI commands (ssis2fabric)
 │   ├── api.py                          # Public Python API (SSISMigrator facade)
-│   ├── config.py                       # Configuration management
+│   ├── config.py                       # Configuration management (Pydantic)
 │   └── logging_config.py              # Structured logging (structlog)
-├── tests/                              # 1101 tests across unit + regression
+├── tests/                              # 1508 tests (36 unit files + regression)
 ├── examples/                           # 12 scenarios + full SSIS project (28 packages)
 ├── azure-pipelines.yml                 # Azure DevOps CI/CD
-├── .github/workflows/ci.yml           # GitHub Actions CI/CD
 ├── migration_config.yaml               # Default configuration
 └── pyproject.toml                      # Python project config
 ```
@@ -553,15 +591,34 @@ from ssis_to_fabric import (
 
 | Command | Description |
 |---------|-------------|
-| `ssis2fabric assess <path>` | Pre-migration readiness assessment with effort estimates |
 | `ssis2fabric analyze <path>` | Parse SSIS packages and display migration assessment |
+| `ssis2fabric assess <path>` | Pre-migration readiness assessment with effort estimates |
 | `ssis2fabric plan <path>` | Generate a migration plan without executing |
 | `ssis2fabric migrate <path>` | Full migration: analyze, plan, generate artifacts |
 | `ssis2fabric deploy <output_dir>` | Deploy artifacts to a Fabric workspace |
 | `ssis2fabric verify <output_dir>` | Verify deployed artifacts exist in workspace |
 | `ssis2fabric validate <baseline> <output>` | Non-regression comparison against baselines |
 | `ssis2fabric validate-config` | Validate migration configuration file |
+| `ssis2fabric validate-deploy <output_dir>` | Validate deployed artifacts against source |
 | `ssis2fabric extract-ssisdb <conn_str>` | Extract .dtsx packages from SSISDB catalog |
+| `ssis2fabric lineage <path>` | Generate data lineage graph (JSON + D3.js) |
+| `ssis2fabric rollback <output_dir>` | Roll back a deployment to previous state |
+| `ssis2fabric init` | Initialize a new migration project scaffold |
+| `ssis2fabric dbt-scaffold <path>` | Generate dbt project from migration output |
+| `ssis2fabric powerbi-dataset <path>` | Generate Power BI dataset from lineage |
+| `ssis2fabric cost-estimate <path>` | Estimate Fabric capacity costs for migration |
+| `ssis2fabric compliance-report <path>` | Generate SOC2/GDPR compliance report |
+| `ssis2fabric schema-export` | Export configuration JSON Schema |
+| `ssis2fabric generate-docs` | Generate Sphinx documentation scaffold |
+| `ssis2fabric data-quality <path>` | Profile data quality and generate validation report |
+| `ssis2fabric git-sync <path>` | Sync migration artifacts to a Git repository |
+| `ssis2fabric dashboard <path>` | Generate self-contained migration dashboard HTML |
+| `ssis2fabric streaming-assess <path>` | Assess packages for streaming/real-time readiness |
+| `ssis2fabric schedule-export <path>` | Export schedules as Fabric triggers / Airflow DAGs |
+| `ssis2fabric policy-check <path>` | Run governance policy checks with optional `--strict` |
+| `ssis2fabric benchmark <path>` | Profile performance and recommend Fabric SKU |
+| `ssis2fabric connector-map <path>` | Map SSIS connections to Fabric connectors |
+| `ssis2fabric smart-analyze <path>` | AI-powered pattern recognition and strategy advice |
 
 ```bash
 # Analyze packages
@@ -595,13 +652,13 @@ ssis2fabric extract-ssisdb "<conn-str>" --folder MyFolder --project MyProject
 ## 🧪 Testing
 
 <p align="center">
-  <img src="https://img.shields.io/badge/tests-1335%20passed-brightgreen?style=for-the-badge" alt="Tests"/>
-  <img src="https://img.shields.io/badge/unit%20tests-792-blue?style=for-the-badge" alt="Unit Tests"/>
+  <img src="https://img.shields.io/badge/tests-1508%20passed-brightgreen?style=for-the-badge" alt="Tests"/>
+  <img src="https://img.shields.io/badge/unit%20tests-36%20files-blue?style=for-the-badge" alt="Unit Tests"/>
   <img src="https://img.shields.io/badge/regression-14-blue?style=for-the-badge" alt="Regression Tests"/>
 </p>
 
 ```bash
-pytest tests/ -v                                     # Run all 1101+ tests
+pytest tests/ -v                                     # Run all 1508+ tests
 pytest tests/unit/ -v                                # Unit tests only
 pytest tests/unit/test_api.py -v                     # API facade tests
 pytest tests/unit/test_automation_features.py -v     # Expression transpiler tests
@@ -615,6 +672,7 @@ pytest tests/ --cov=ssis_to_fabric --cov-report=html # Coverage report
 | Test File | Tests | Coverage |
 |-----------|-------|----------|
 | `test_spark_generator.py` | 91 | Notebook generation, transforms & code validity |
+| `test_phase8_expressions.py` | 96 | Expression transpiler completeness (bitwise, trig, nested) |
 | `test_automation_features.py` | 63 | Expression transpiler, metadata wiring, sidecar, FS/FTP |
 | `test_data_factory_generator.py` | 46 | Pipeline & folder organization |
 | `test_data_sources.py` | 40 | ODBC/XML/CDC/Raw/type-aware generators |
@@ -622,10 +680,18 @@ pytest tests/ --cov=ssis_to_fabric --cov-report=html # Coverage report
 | `test_api.py` | 34 | Python API facade |
 | `test_parameters_parent_child.py` | 27 | Parameter & parent-child bindings |
 | `test_dtsx_parser.py` | 26 | SSIS XML parser |
-| `test_migration_engine.py` | 19 | Engine routing & orchestration |
+| `test_phase17_data_quality.py` | 25 | Data profiling, validation rules, risk scoring |
+| `test_phase21_script.py` | 18 | C# AST parsing, BCL mapping, transpilation |
+| `test_phase23_policy.py` | 17 | Governance rules, PII detection, promotion |
+| `test_phase24_performance.py` | 15 | Profiler, Spark optimizer, capacity tuning |
+| `test_phase25_connectors.py` | 19 | Enterprise connector mapping (Oracle, SAP, S3, etc.) |
+| `test_phase26_intelligence.py` | 18 | AI pattern recognition, NL queries, auto tests |
+| `test_phase22_orchestration.py` | 14 | Schedule extraction, Airflow/Logic Apps |
+| `test_phase19_dashboard.py` | 14 | API routes, SSE progress, dashboard |
+| `test_phase20_streaming.py` | 14 | Event Hub/Kafka/CDC detection, Eventstream |
 | `test_non_regression.py` | 14 | Baseline comparison (regression) |
-| `test_config.py` | 6 | Configuration management |
-| + more | — | Additional edge case tests |
+| `test_phase18_gitops.py` | 13 | Git-sync, fabricignore, artifact diff |
+| + 16 more test files | — | Phases 5–16, CLI, config, migration engine |
 
 </details>
 
@@ -633,7 +699,7 @@ pytest tests/ --cov=ssis_to_fabric --cov-report=html # Coverage report
 
 ```mermaid
 flowchart LR
-    L["🔍 Lint\nruff + mypy"] --> T["🧪 Test\n1101 tests\nPy 3.10–3.13"]
+    L["🔍 Lint\nruff + mypy"] --> T["🧪 Test\n1508 tests\nPy 3.10–3.14"]
     T --> R["✅ Regression\nBaseline\nvalidation"]
     R --> D["📦 Dry Run\nSample migration"]
     D --> P["🚀 Deploy\nFabric workspace"]
@@ -799,12 +865,11 @@ Both use regex pattern matching. Add new patterns as `re.sub` or `re.match` bloc
 
 | Area | Limitation | Workaround |
 |------|-----------|------------|
-| **Script Tasks** | C# → Python transpilation is regex-based; complex .NET code produces `# TODO` stubs | Manual review of generated Python skeletons |
-| **Expressions** | Bitwise operators (`BITAND`, `BITOR`, `BITXOR`) not yet supported | Manual conversion (Phase 8) |
+| **Script Tasks** | Complex .NET interop or COM references in C# scripts produce `# TODO` stubs | Manual review; Phase 21 AST transpiler handles most standard .NET BCL calls |
 | **Event Handlers** | Only `OnError` fully converted; other handlers emit placeholder Wait activities | Review and customize generated placeholders |
 | **SCD** | Only Type 2 supported; Type 1/3+ produce skeletons | Extend merge logic manually |
-| **Lineage** | Table-level only; no column-level tracking | Column lineage planned for Phase 11 |
 | **Nested Containers** | Sequence containers are flattened (no true nesting) | Dependency graph preserves execution order |
+| **Streaming** | Real-time patterns detected but Eventstream artifacts are templates | Configure Eventstream manually in Fabric portal |
 
 ---
 

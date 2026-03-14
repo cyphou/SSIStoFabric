@@ -40,27 +40,29 @@ src/ssis_to_fabric/
 ├── analyzer/         → SSIS package parsing (.dtsx XML → models)
 │   ├── models.py    →   Data models (SSISPackage, Variable, Task, DataFlowComponent, etc.)
 │   └── dtsx_parser.py →  .dtsx XML parser + Project.params reader
-├── engine/           → Migration generators & deployment
+├── engine/           → 29 migration & analysis modules
 │   ├── migration_engine.py    → Orchestration, routing & plan generation
 │   ├── data_factory_generator.py → ADF pipeline JSON generation
-│   ├── dataflow_generator.py     → Dataflow Gen2 (Power Query M) + expression transpiler
-│   ├── spark_generator.py        → PySpark notebook + expression transpiler
+│   ├── dataflow_generator.py     → Dataflow Gen2 (Power Query M)
+│   ├── spark_generator.py        → PySpark notebook generation
 │   ├── expression_transpiler.py  → Unified expression transpiler facade
-│   ├── utils.py                  → Shared generator utilities
 │   ├── fabric_deployer.py        → Fabric REST API deployment
 │   ├── csharp_transpiler.py      → C# Script Task → Python transpiler
-│   ├── lineage.py                → Data lineage graph builder
-│   ├── report_generator.py       → HTML migration report
-│   ├── lakehouse_provisioner.py  → DDL generation for Lakehouse/Warehouse
-│   ├── ssisdb_extractor.py       → SSISDB catalog .dtsx extraction
-│   └── agents.py                 → Multi-agent parallel orchestration
+│   ├── script_transpiler.py      → AST-based C# parser, .NET BCL mapping
+│   ├── lineage.py / column_lineage.py → Table & column lineage graphs
+│   ├── data_quality.py           → Column profiling, validation rules
+│   ├── gitops.py                 → Git-sync, artifact versioning
+│   ├── policy_engine.py          → Governance rules, PII detection
+│   ├── connectors.py             → Enterprise connector mapping
+│   ├── intelligence.py           → AI pattern recognition, NL queries
+│   └── + 10 more modules         → See README for full list
 ├── testing/          → Non-regression baseline validation
 │   └── regression_runner.py
-├── cli.py            → CLI entry point (ssis2fabric)
+├── cli.py            → 30 CLI commands (ssis2fabric)
 ├── api.py            → Public Python API (SSISMigrator facade)
 ├── config.py         → Configuration management (Pydantic)
 └── logging_config.py → Structured logging (structlog)
-tests/                → 1013 tests (999 unit + 14 regression)
+tests/                → 1508 tests (36 unit files + 14 regression)
 examples/             → 12 scenarios + 28 real SSIS packages
 ```
 
@@ -92,7 +94,7 @@ mypy src/ssis_to_fabric/ --ignore-missing-imports  # Type check
 ## 🧪 Testing
 
 ```bash
-# All tests (1013+)
+# All tests (1508+)
 pytest tests/ -v
 
 # Unit tests only
@@ -175,30 +177,26 @@ docs: update README with new component support table
 
 ## 🎯 Areas for Contribution
 
-See the [Roadmap](README.md#-roadmap) for the full Phase 7–16 plan.
+See the [Roadmap](README.md#-roadmap) for the full Phase 27–36 plan.
 
-### High Priority (Phase 7–8)
+### High Priority (Phase 27–29)
 
-- OpenTelemetry tracing and correlation IDs for agent orchestration
-- Bitwise operator support (`BITAND`, `BITOR`, `BITXOR`) in expression transpilers
-- C# transpiler AST mode (tree-walk parser replacing regex for complex scripts)
-- Interactive charts in HTML migration report
+- Package decomposition: auto-split monolithic SSIS packages into smaller Fabric pipelines
+- Migration validation framework: test harness generation, schema drift detection
+- Metadata catalog: searchable index of all packages, tasks, connections, lineage
 
-### Medium Priority (Phase 9–11)
+### Medium Priority (Phase 30–33)
 
-- Plugin architecture: `TransformationStrategy` protocol for custom generators
-- Transaction scope support for SSIS `Required`/`Supported` semantics
-- Column-level lineage tracking through transformations
-- WMI Event Watcher, Web Service, and XML Task generation
+- Multi-cloud target support: Databricks, AWS Glue, GCP Dataflow generators
+- Automated remediation: resolve TODO stubs with template-based code gen
+- Migration analytics: longitudinal tracking, trend dashboards, Power BI export
+- Disaster recovery: cloud-backed checkpoints, resumable migrations
 
-### Low Priority (Phase 12–16)
+### Low Priority (Phase 34–36)
 
-- Blue-green deployment and rollback CLI command
-- Property-based testing (Hypothesis) for expression transpiler fuzzing
-- Azure Key Vault secret resolution for connection credentials
-- Power BI dataset generation from lineage graph
-- VS Code extension for inline migration assessment
-- Sphinx-generated API documentation
+- Compliance frameworks: HIPAA/PCI-DSS/ISO 27001 rule sets, evidence packages
+- API-first architecture: REST server, Python SDK, webhooks, GraphQL
+- Legacy modernization patterns: medallion architecture, wave planner
 
 ---
 
@@ -208,5 +206,5 @@ See the [Roadmap](README.md#-roadmap) for the full Phase 7–16 plan.
 2. Run full test suite: `pytest tests/ -v`
 3. Validate all sample migrations
 4. Bump version in `pyproject.toml`
-5. Create a Git tag: `git tag v1.x.x`
+5. Create a Git tag: `git tag v4.x.x`
 6. Push to main: `git push origin main --tags`

@@ -57,11 +57,29 @@ ssis2fabric analyze examples/01_simple_copy/
 # Analyze all examples
 ssis2fabric analyze examples/
 
+# Pre-migration readiness assessment
+ssis2fabric assess examples/05_fact_table_etl/
+
 # Generate a migration plan for a specific example
 ssis2fabric plan examples/05_fact_table_etl/ --output plan.json
 
 # Migrate all examples
 ssis2fabric migrate examples/ --strategy hybrid --output output/
+
+# AI-powered pattern recognition
+ssis2fabric smart-analyze examples/
+
+# Data quality profiling
+ssis2fabric data-quality examples/08_data_warehouse_etl/
+
+# Streaming readiness assessment
+ssis2fabric streaming-assess examples/11_realtime_cdc/
+
+# Map SSIS connections to Fabric connectors
+ssis2fabric connector-map examples/full_ssis_project/
+
+# Run governance policy checks
+ssis2fabric policy-check examples/ --strict
 ```
 
 ---
