@@ -1652,3 +1652,42 @@ def decompose(path: str, min_tasks: int, output: str) -> None:
         console.print(f"\n[yellow]{len(shared_flows)} shared data flows detected (DRY candidates)[/yellow]")
 
     console.print(f"\n[green]Report: {report_path}[/green]")
+
+
+@main.command(name="test-gen")
+@click.argument("path")
+@click.option("--output", "-o", default="validation_tests", help="Output directory for generated tests.")
+@click.option("--golden-dir", default=None, help="Directory for golden datasets.")
+def test_gen(path: str, output: str, golden_dir: str | None) -> None:
+    """Generate validation test suites for migrated SSIS packages."""
+    from ssis_to_fabric.engine.migration_validator import (
+        extract_schemas_from_package,
+        generate_test_harness,
+        write_test_file,
+    )
+
+    parser = DTSXParser()
+    p = Path(path)
+    packages = [parser.parse(p)] if p.is_file() else parser.parse_directory(p)
+    output_dir = Path(output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    total_tests = 0
+    table = Table(title="Test Generation Results")
+    table.add_column("Package", style="cyan")
+    table.add_column("Tables", justify="right")
+    table.add_column("Tests", justify="right")
+    table.add_column("Output", style="green")
+
+    for pkg in packages:
+        pkg_name = getattr(pkg, "name", "unknown")
+        safe_name = pkg_name.lower().replace(" ", "_").replace(".", "_")
+        schemas = extract_schemas_from_package(pkg)
+        tests = generate_test_harness(pkg, output_schemas=schemas)
+        test_path = output_dir / f"test_{safe_name}_validation.py"
+        write_test_file(tests, test_path, package_name=pkg_name)
+        total_tests += len(tests)
+        table.add_row(pkg_name, str(len(schemas)), str(len(tests)), str(test_path))
+
+    console.print(table)
+    console.print(f"\n[green]Generated {total_tests} tests for {len(packages)} package(s)[/green]")

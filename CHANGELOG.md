@@ -11,14 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > The following phases are planned. Each will be released as a minor or major version.
 
-### Phase 28 — Migration Validation & Testing Framework *(v4.2.0)*
-- Generated test harnesses for each pipeline (mock data in → expected data out)
-- Schema drift detection between source SSIS destinations and Fabric lakehouse tables
-- Data sampling and hash-based record comparison (beyond row counts)
-- Execution trace replay: compare SSIS execution logs vs Fabric pipeline run outputs
-- Golden dataset management for regression testing of migrations
-- `ssis2fabric test-gen` CLI command to scaffold pytest suites per migrated package
-
 ### Phase 29 — Metadata Catalog & Discovery *(v4.3.0)*
 - Unified metadata store (SQLite/JSON-DB) indexing all packages, tasks, connections, lineage edges
 - Full-text search across package names, table names, expressions, connection strings
@@ -84,6 +76,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ssis2fabric modernize` CLI command with `--pattern medallion|event-driven|microservice`
 
 ---
+
+## [4.2.0] - 2025-07-24
+
+### 🧪 Phase 28 — Migration Validation & Testing Framework
+- Generated test harnesses per pipeline: schema checks, row counts, not-null validation, execution trace tests
+- Schema drift detection between source SSIS destinations and Fabric lakehouse tables (added, removed, type/nullability/length changes)
+- Hash-based record comparison with configurable key and compare columns (beyond simple row counts)
+- Execution trace replay: compare expected vs actual task lists, row counts with tolerance, and status
+- Golden dataset management: save/load reference datasets with schema and versioning for regression testing
+- Schema extraction from SSIS packages and `.destinations.json` sidecar files
+- Comprehensive validation report (JSON) with summary, drifts, record comparisons, and trace results
+- `ssis2fabric test-gen` CLI command to scaffold pytest suites per migrated package
 
 ## [4.1.0] - 2026-03-14
 
