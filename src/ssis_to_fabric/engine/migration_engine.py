@@ -391,6 +391,19 @@ class MigrationEngine:
                         item.status = "skipped"
                         item.notes.append("Skipped (incremental — no changes detected)")
 
+            # Task-level checkpoint: skip tasks that completed in a prior run
+            # (for packages that changed but have partially completed tasks from error recovery)
+            for item in plan.items:
+                if item.status == "skipped":
+                    continue
+                pkg_state = prev_state.get(item.source_package, {})
+                prior_tasks = pkg_state.get("completed_tasks", [])
+                prior_hash = pkg_state.get("hash", "")
+                cur_hash = current_hashes.get(item.source_package, "")
+                if prior_hash == cur_hash and item.source_task in prior_tasks:
+                    item.status = "skipped"
+                    item.notes.append("Skipped (task completed in prior run)")
+
         # Clean previous output to prevent stale artifacts from prior runs
         import shutil
 
@@ -428,6 +441,8 @@ class MigrationEngine:
         _cb = progress_callback
         phase1_start = time.monotonic()
         for item in plan.items:
+            if item.status == "skipped":
+                continue
             try:
                 package = pkg_map.get(item.source_package)
                 if package is None:
@@ -542,18 +557,26 @@ class MigrationEngine:
             "phase2_ms": phase2_ms,
         })
 
-        # --- Phase 3: Generate connection manifests ---
+        # --- Phase 3: Generate connection manifests & logging config ---
         self._generate_connection_manifests(packages, output_dir)
+        self._generate_logging_config(packages, output_dir)
 
-        # Persist updated state for incremental runs
+        # Persist updated state for incremental runs (package-level + task-level checkpoints)
         if incremental or current_hashes:
             new_state = dict(prev_state)
             for pkg in packages:
                 if pkg.name in current_hashes:
+                    # Task-level checkpoint: record which tasks completed
+                    completed_tasks = [
+                        item.source_task
+                        for item in plan.items
+                        if item.source_package == pkg.name and item.status == "completed"
+                    ]
                     new_state[pkg.name] = {
                         "hash": current_hashes[pkg.name],
                         "migrated_at": datetime.now(tz=timezone.utc).isoformat(),
                         "file_path": pkg.file_path,
+                        "completed_tasks": completed_tasks,
                     }
             _save_migration_state(_state_dir, new_state)
 
@@ -894,3 +917,32 @@ class MigrationEngine:
             path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
         logger.info("connection_manifests_generated", count=len(seen), path=str(conn_dir))
+
+    def _generate_logging_config(self, packages: list[SSISPackage], output_dir: Path) -> None:
+        """Generate a logging configuration manifest from SSIS log providers.
+
+        Collects all ``LogProvider`` objects across packages and writes a
+        single ``logging_config.json`` summarising each provider with its
+        type and connection reference.
+        """
+        providers: list[dict[str, Any]] = []
+        seen_names: set[str] = set()
+        for pkg in packages:
+            for lp in pkg.logging_providers:
+                if lp.name in seen_names:
+                    continue
+                seen_names.add(lp.name)
+                providers.append({
+                    "name": lp.name,
+                    "provider_type": lp.provider_type,
+                    "connection_manager_ref": lp.connection_manager_ref,
+                    "description": lp.description,
+                    "source_package": pkg.name,
+                })
+
+        if not providers:
+            return
+
+        path = output_dir / "logging_config.json"
+        path.write_text(json.dumps({"logging_providers": providers}, indent=2), encoding="utf-8")
+        logger.info("logging_config_generated", count=len(providers), path=str(path))

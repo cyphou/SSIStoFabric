@@ -25,12 +25,14 @@ from ssis_to_fabric.analyzer.models import (
     DataFlowComponentType,
     DataFlowPath,
     EventHandler,
+    LogProvider,
     MigrationComplexity,
     PrecedenceConstraint,
     PrecedenceConstraintType,
     SqlParameterBinding,
     SSISPackage,
     TaskType,
+    TransactionOption,
     Variable,
     VariableScope,
 )
@@ -59,6 +61,10 @@ TASK_CLASS_MAP: dict[str, TaskType] = {
     "STOCK:FOREACHLOOP": TaskType.FOREACH_LOOP,
     "Microsoft.ExpressionTask": TaskType.EXPRESSION,
     "Microsoft.ExecutePackageTask": TaskType.EXECUTE_PACKAGE,
+    "Microsoft.WebServiceTask": TaskType.WEB_SERVICE,
+    "Microsoft.XMLTask": TaskType.XML,
+    "Microsoft.WmiEventWatcherTask": TaskType.WMI_EVENT_WATCHER,
+    "Microsoft.WmiDataReaderTask": TaskType.WMI_DATA_READER,
 }
 
 # Map component class IDs to DataFlowComponentType
@@ -227,6 +233,8 @@ class DTSXParser:
             package, self._parse_precedence_constraints, root, nsmap
         )
         package.event_handlers = self._parse_section_safe(package, self._parse_event_handlers, root, nsmap)
+        package.logging_providers = self._parse_section_safe(package, self._parse_log_providers, root, nsmap)
+        package.annotations = self._parse_annotations(root, nsmap)
 
         package.compute_stats()
 
@@ -615,6 +623,16 @@ class DTSXParser:
         description = self._get_dts_attr(elem, "Description", nsmap) or ""
         disabled = self._get_dts_attr(elem, "Disabled", nsmap) == "True"
 
+        # Transaction attributes
+        txn_raw = self._get_dts_attr(elem, "TransactionOption", nsmap) or ""
+        isolation_level = self._get_dts_attr(elem, "IsolationLevel", nsmap) or ""
+        txn_map = {
+            "0": TransactionOption.NOT_SUPPORTED,
+            "1": TransactionOption.SUPPORTED,
+            "2": TransactionOption.REQUIRED,
+        }
+        transaction_option = txn_map.get(txn_raw, TransactionOption.SUPPORTED)
+
         task_type = self._classify_task_type(creation_name)
 
         task = ControlFlowTask(
@@ -624,6 +642,8 @@ class DTSXParser:
             task_type=task_type,
             description=description,
             disabled=disabled,
+            transaction_option=transaction_option,
+            isolation_level=isolation_level,
         )
 
         # Parse task-specific content
@@ -1071,6 +1091,43 @@ class DTSXParser:
                 tasks = self._parse_executables(eh_elem, nsmap)
                 handlers.append(EventHandler(event_type=event_type, tasks=tasks))
         return handlers
+
+    def _parse_log_providers(self, root: etree._Element, nsmap: dict[str, str]) -> list[LogProvider]:
+        """Parse SSIS log providers from the package."""
+        providers: list[LogProvider] = []
+        for container in self._find_dts(root, "LogProviders", nsmap):
+            for lp_elem in self._find_dts(container, "LogProvider", nsmap):
+                name = self._get_dts_attr(lp_elem, "ObjectName", nsmap) or "Unknown"
+                creation_name = self._get_dts_attr(lp_elem, "CreationName", nsmap) or ""
+                description = self._get_dts_attr(lp_elem, "Description", nsmap) or ""
+                conn_ref = ""
+                # Connection manager reference is typically in a ConfigurationString property
+                config_str = self._get_dts_attr(lp_elem, "ConfigString", nsmap) or ""
+                if config_str:
+                    conn_ref = config_str
+                providers.append(LogProvider(
+                    name=name,
+                    provider_type=creation_name,
+                    connection_manager_ref=conn_ref,
+                    description=description,
+                ))
+        return providers
+
+    def _parse_annotations(self, root: etree._Element, nsmap: dict[str, str]) -> list[str]:
+        """Parse package-level annotations from DTSX XML."""
+        annotations: list[str] = []
+        # DTS:Annotation elements or DTS:AnnotationText
+        for ann_container in self._find_dts(root, "PackageAnnotations", nsmap):
+            for ann in ann_container:
+                text = ann.text
+                if text and text.strip():
+                    annotations.append(text.strip())
+        # Also check raw Annotation elements at package level
+        for ann in self._find_dts(root, "Annotation", nsmap):
+            text = ann.text
+            if text and text.strip():
+                annotations.append(text.strip())
+        return annotations
 
     # =========================================================================
     # Complexity Assessment

@@ -11,14 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > The following phases are planned. Each will be released as a minor or major version.
 
-### Phase 10 — Advanced SSIS Features *(v1.8.0)*
-- Transaction scope support (`Required`/`Supported` → pipeline activity groups with error handling)
-- Checkpoint/restart (idempotent re-runs with checkpoint state persistence and resume)
-- Disabled task handling (skip generation or emit commented-out code)
-- Logging provider migration (SSIS SQL/XML/text log providers → Fabric monitoring config)
-- WMI Event Watcher, Web Service, and XML Task generation (currently routed to MANUAL)
-- Package annotation preservation in generated artifacts as comments
-
 ### Phase 11 — Column-Level Lineage *(v1.9.0)*
 - Column-level lineage tracking (source column → transformation → destination column)
 - Transformation semantics in lineage graph (JOIN, FILTER, DERIVE, AGGREGATE)
@@ -65,6 +57,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migration cookbook (common SSIS patterns with before/after code comparisons)
 - JSON Schema export for `migration_config.yaml` validation by external tools
 - VS Code extension (inline assessment, syntax highlighting for generated artifacts)
+
+---
+
+## [1.8.0] - 2026-03-14
+
+### ✨ Phase 10 — Advanced SSIS Features
+
+#### Transaction Scope Support
+- `TransactionOption` enum (`NOT_SUPPORTED`, `SUPPORTED`, `REQUIRED`) on `ControlFlowTask`
+- Parser extracts `DTS:TransactionOption` (0/1/2) and `IsolationLevel` attributes
+- Data Factory: `Required` transactions annotated with `[Transaction: REQUIRED]` and fail-fast policy (retry=0)
+- Spark notebooks: transaction option shown in header when non-default
+
+#### Task-Level Checkpoint / Restart
+- Incremental state now tracks `completed_tasks` per package in `state.json`
+- Individual tasks completed in a prior run (same hash) are skipped on re-run
+- Enables fine-grained resume after partial failures
+
+#### Logging Provider Migration
+- `LogProvider` model: name, provider_type, connection_manager_ref, description, properties
+- Parser extracts `DTS:LogProviders/DTS:LogProvider` elements
+- `logging_config.json` manifest generated alongside connection manifests
+- Log provider names included in pipeline description
+
+#### WMI, Web Service & XML Task Generation
+- `WMI_EVENT_WATCHER` and `WMI_DATA_READER` task types added to `TaskType` enum
+- `TASK_CLASS_MAP` entries for `Microsoft.WebServiceTask`, `Microsoft.XMLTask`, `Microsoft.WmiEventWatcherTask`, `Microsoft.WmiDataReaderTask`
+- Data Factory: WebService → `WebActivity`, XML → `Script` placeholder, WMI → `Wait` placeholder
+- Spark: Python `requests` template, `lxml`/`etree` template, WQL information placeholder
+
+#### Package Annotation Preservation
+- Parser extracts `DTS:PackageAnnotations/DTS:Annotation` elements
+- Annotations added to pipeline `annotations` array and Spark notebook header
+- Package description included in both pipeline and notebook metadata
+
+#### Disabled Task Handling
+- Disabled tasks (`task.disabled == True`) skip generation in Data Factory (return `None`)
+- Confirmed across both generators with regression tests
+
+#### Infrastructure
+- 56 new tests (1069 total)
 
 ---
 

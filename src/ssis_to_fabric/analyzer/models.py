@@ -47,7 +47,17 @@ class TaskType(str, Enum):
     EXECUTE_PACKAGE = "EXECUTE_PACKAGE"
     WEB_SERVICE = "WEB_SERVICE"
     XML = "XML"
+    WMI_EVENT_WATCHER = "WMI_EVENT_WATCHER"
+    WMI_DATA_READER = "WMI_DATA_READER"
     UNKNOWN = "UNKNOWN"
+
+
+class TransactionOption(str, Enum):
+    """SSIS TransactionOption attribute values."""
+
+    NOT_SUPPORTED = "NotSupported"
+    SUPPORTED = "Supported"
+    REQUIRED = "Required"
 
 
 class DataFlowComponentType(str, Enum):
@@ -221,6 +231,8 @@ class ControlFlowTask(BaseModel):
     sql_statement: str = ""
     expression: str = ""
     disabled: bool = False
+    transaction_option: TransactionOption = TransactionOption.SUPPORTED
+    isolation_level: str = ""
     properties: dict[str, Any] = Field(default_factory=dict)
 
     # Execute SQL parameter bindings (? placeholders → SSIS variables)
@@ -249,6 +261,16 @@ class EventHandler(BaseModel):
     tasks: list[ControlFlowTask] = Field(default_factory=list)
 
 
+class LogProvider(BaseModel):
+    """Represents an SSIS log provider configuration."""
+
+    name: str
+    provider_type: str = ""  # "DTS.LogProviderSQLServer", "DTS.LogProviderTextFile", etc.
+    connection_manager_ref: str = ""
+    description: str = ""
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+
 class SSISPackage(BaseModel):
     """
     Complete parsed representation of an SSIS package.
@@ -269,6 +291,8 @@ class SSISPackage(BaseModel):
     control_flow_tasks: list[ControlFlowTask] = Field(default_factory=list)
     precedence_constraints: list[PrecedenceConstraint] = Field(default_factory=list)
     event_handlers: list[EventHandler] = Field(default_factory=list)
+    logging_providers: list[LogProvider] = Field(default_factory=list)
+    annotations: list[str] = Field(default_factory=list)
 
     # Analysis metadata
     total_tasks: int = 0

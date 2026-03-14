@@ -99,6 +99,12 @@ class SparkNotebookGenerator:
             sections.append(self._generate_script_placeholder(task))
         elif task.task_type == TaskType.EXECUTE_PROCESS:
             sections.append(self._generate_process_placeholder(task))
+        elif task.task_type == TaskType.WEB_SERVICE:
+            sections.append(self._generate_web_service_placeholder(task))
+        elif task.task_type == TaskType.XML:
+            sections.append(self._generate_xml_task_placeholder(task))
+        elif task.task_type in (TaskType.WMI_EVENT_WATCHER, TaskType.WMI_DATA_READER):
+            sections.append(self._generate_wmi_placeholder(task))
         else:
             sections.append(self._generate_generic_placeholder(task))
 
@@ -112,17 +118,29 @@ class SparkNotebookGenerator:
 
     def _generate_header(self, package: SSISPackage, task: ControlFlowTask) -> str:
         """Generate notebook header with metadata."""
-        return dedent(f"""\
-            # Fabric Notebook
-            # Migrated from SSIS Package: {package.name}
-            # Task: {task.name}
-            # Task Type: {task.task_type.value}
-            # Generated: {datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC
-            # Migration Complexity: {task.migration_complexity.value}
-            #
-            # NOTE: Review all TODO comments before running in production.
-            # This notebook was auto-generated and may require adjustments.
-        """)
+        lines = [
+            "# Fabric Notebook",
+            f"# Migrated from SSIS Package: {package.name}",
+            f"# Task: {task.name}",
+            f"# Task Type: {task.task_type.value}",
+            f"# Generated: {datetime.now(tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC",
+            f"# Migration Complexity: {task.migration_complexity.value}",
+        ]
+        if task.transaction_option.value != "Supported":
+            lines.append(f"# Transaction: {task.transaction_option.value}")
+        if package.annotations:
+            lines.append("#")
+            lines.append("# Package Annotations:")
+            for ann in package.annotations:
+                lines.append(f"#   - {ann}")
+        if package.description:
+            lines.append(f"# Package Description: {package.description}")
+        lines.extend([
+            "#",
+            "# NOTE: Review all TODO comments before running in production.",
+            "# This notebook was auto-generated and may require adjustments.",
+        ])
+        return "\n".join(lines)
 
     def _generate_imports(self) -> str:
         """Generate standard imports."""
@@ -1289,6 +1307,44 @@ class SparkNotebookGenerator:
         return dedent(f'''\
             # === {task.task_type.value} Task: {task.name} ===
             # TODO: This task type ({task.task_type.value}) requires manual migration.
+            # Description: {task.description}
+            raise NotImplementedError("{task.task_type.value} task requires manual migration")
+        ''')
+
+    def _generate_web_service_placeholder(self, task: ControlFlowTask) -> str:
+        """Generate placeholder for SSIS Web Service Task."""
+        url = task.properties.get("Url", task.properties.get("ServerURL", "https://TODO"))
+        return dedent(f'''\
+            # === Web Service Task: {task.name} ===
+            # TODO: Migrate SSIS Web Service Task to Python HTTP call
+            # Target URL: {url}
+            # Description: {task.description}
+            import requests
+            response = requests.get("{url}")  # TODO: configure method, headers, body
+            logger.info("Web service call status: %s", response.status_code)
+        ''')
+
+    def _generate_xml_task_placeholder(self, task: ControlFlowTask) -> str:
+        """Generate placeholder for SSIS XML Task."""
+        operation = task.properties.get("OperationType", "UNKNOWN")
+        return dedent(f'''\
+            # === XML Task: {task.name} ===
+            # TODO: Migrate SSIS XML Task (operation: {operation})
+            # Description: {task.description}
+            from lxml import etree
+            # TODO: Implement XML transformation/validation logic
+            # xml_tree = etree.parse("input.xml")
+            raise NotImplementedError("XML Task '{task.name}' requires manual migration")
+        ''')
+
+    def _generate_wmi_placeholder(self, task: ControlFlowTask) -> str:
+        """Generate placeholder for SSIS WMI tasks."""
+        wql = task.properties.get("WqlQuerySource", "")
+        return dedent(f'''\
+            # === {task.task_type.value} Task: {task.name} ===
+            # TODO: WMI tasks have no direct Spark equivalent.
+            # Consider Azure Monitor, Logic Apps, or custom REST API.
+            # WQL: {wql}
             # Description: {task.description}
             raise NotImplementedError("{task.task_type.value} task requires manual migration")
         ''')

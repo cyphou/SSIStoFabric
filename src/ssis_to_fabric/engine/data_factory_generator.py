@@ -29,6 +29,7 @@ from ssis_to_fabric.analyzer.models import (
     SqlParameterBinding,
     SSISPackage,
     TaskType,
+    TransactionOption,
 )
 from ssis_to_fabric.engine.utils import DEST_COMPONENT_TYPES, SOURCE_COMPONENT_TYPES, sanitize_name
 from ssis_to_fabric.logging_config import get_logger
@@ -163,11 +164,15 @@ class DataFactoryGenerator:
         if event_activities:
             activities.extend(event_activities)
 
+        # Apply transaction scope: wrap tasks with Required in error-handling groups
+        activities = self._apply_transaction_scope(activities, package.control_flow_tasks)
+
         pipeline = self._build_pipeline_definition(
             name=self._sanitize_name(package.name),
             activities=activities,
             parameters=self._package_params_to_df_params(package),
             variables=self._variables_to_df_variables(package),
+            package=package,
         )
 
         pipelines_dir = output_dir / "pipelines"
@@ -525,18 +530,33 @@ class DataFactoryGenerator:
         activities: list[dict[str, Any]],
         parameters: dict[str, Any] | None = None,
         variables: dict[str, Any] | None = None,
+        package: SSISPackage | None = None,
     ) -> dict[str, Any]:
         """Build a Fabric Data Factory pipeline JSON structure."""
+        ann_list: list[str] = [
+            "migrated-from-ssis",
+            f"generated-{__import__('datetime').datetime.now(__import__('datetime').timezone.utc).strftime('%Y%m%d')}",
+        ]
+        # Preserve original SSIS package annotations
+        if package and package.annotations:
+            ann_list.extend(package.annotations)
+
+        desc_parts: list[str] = []
+        if package and package.description:
+            desc_parts.append(f"Original SSIS description: {package.description}")
+        if package and package.logging_providers:
+            provider_names = [lp.name for lp in package.logging_providers]
+            desc_parts.append(f"SSIS log providers: {', '.join(provider_names)}")
+
         pipeline: dict[str, Any] = {
             "name": name,
             "properties": {
                 "activities": activities,
-                "annotations": [
-                    "migrated-from-ssis",
-                    f"generated-{__import__('datetime').datetime.now(__import__('datetime').timezone.utc).strftime('%Y%m%d')}",
-                ],
+                "annotations": ann_list,
             },
         }
+        if desc_parts:
+            pipeline["properties"]["description"] = " | ".join(desc_parts)
         if parameters:
             pipeline["properties"]["parameters"] = parameters
         if variables:
@@ -574,6 +594,12 @@ class DataFactoryGenerator:
             return self._file_system_to_activity(task)
         elif task.task_type == TaskType.FTP:
             return self._ftp_to_activity(task)
+        elif task.task_type == TaskType.WEB_SERVICE:
+            return self._web_service_to_activity(task)
+        elif task.task_type == TaskType.XML:
+            return self._xml_task_to_activity(task)
+        elif task.task_type in (TaskType.WMI_EVENT_WATCHER, TaskType.WMI_DATA_READER):
+            return self._wmi_to_activity(task)
         else:
             return self._unknown_task_placeholder(task)
 
@@ -1261,6 +1287,117 @@ class DataFactoryGenerator:
                 f"SSIS FTP Task: {op}. "
                 f"Local='{local_path}' Remote='{remote_path}'. "
                 f"TODO: Implement FTP {op} operation in notebook."
+            ),
+        }
+
+    def _apply_transaction_scope(
+        self,
+        activities: list[dict[str, Any]],
+        tasks: list[ControlFlowTask],
+    ) -> list[dict[str, Any]]:
+        """Apply SSIS transaction scopes to pipeline activities.
+
+        Tasks with ``TransactionOption.REQUIRED`` have their activities
+        annotated with ``on_failure`` metadata so downstream activities
+        can be skipped on error (fail-fast).
+        """
+        # Build a name→task lookup for matching
+        task_by_name: dict[str, ControlFlowTask] = {}
+        self._collect_tasks(tasks, task_by_name)
+
+        txn_task_names: set[str] = set()
+        for t in task_by_name.values():
+            if t.transaction_option == TransactionOption.REQUIRED:
+                txn_task_names.add(self._sanitize_name(t.name))
+
+        if not txn_task_names:
+            return activities
+
+        # For activities in a Required transaction scope, add failure metadata
+        for act in activities:
+            act_name = act.get("name", "")
+            if act_name in txn_task_names:
+                desc = act.get("description", "")
+                act["description"] = (
+                    f"[Transaction: REQUIRED] {desc}".strip()
+                )
+                # Add a policy with retry=0 and timeout for fail-fast
+                if "policy" not in act:
+                    act["policy"] = {
+                        "retry": 0,
+                        "retryIntervalInSeconds": 30,
+                        "secureOutput": False,
+                        "secureInput": False,
+                    }
+                else:
+                    act["policy"]["retry"] = 0
+
+        return activities
+
+    def _collect_tasks(
+        self,
+        tasks: list[ControlFlowTask],
+        result: dict[str, ControlFlowTask],
+    ) -> None:
+        """Recursively collect all tasks into a flat dict keyed by sanitized name."""
+        for t in tasks:
+            result[self._sanitize_name(t.name)] = t
+            if t.child_tasks:
+                self._collect_tasks(t.child_tasks, result)
+
+    def _web_service_to_activity(self, task: ControlFlowTask) -> dict[str, Any]:
+        """Convert an SSIS Web Service Task to a Web activity."""
+        url = task.properties.get("Url", task.properties.get("ServerURL", ""))
+        method = task.properties.get("HttpMethod", "GET")
+        return {
+            "name": self._sanitize_name(task.name),
+            "type": "WebActivity",
+            "typeProperties": {
+                "url": url or "https://TODO-configure-endpoint",
+                "method": method,
+                "body": task.properties.get("RequestBody", ""),
+            },
+            "description": (
+                f"Migrated from SSIS Web Service Task: {task.name}. "
+                f"Original description: {task.description}"
+            ),
+        }
+
+    def _xml_task_to_activity(self, task: ControlFlowTask) -> dict[str, Any]:
+        """Convert an SSIS XML Task to a Script activity placeholder."""
+        operation = task.properties.get("OperationType", "UNKNOWN")
+        return {
+            "name": self._sanitize_name(task.name),
+            "type": "Script",
+            "typeProperties": {
+                "scriptBlockType": "SQL",
+                "scriptBlock": (
+                    f"-- TODO: Migrate SSIS XML Task '{task.name}'\n"
+                    f"-- Operation: {operation}\n"
+                    f"-- Original description: {task.description}\n"
+                    "SELECT 1 AS placeholder"
+                ),
+            },
+            "description": (
+                f"TODO: Migrate XML Task '{task.name}' (operation: {operation}). "
+                "Consider using Spark notebook for XML processing."
+            ),
+        }
+
+    def _wmi_to_activity(self, task: ControlFlowTask) -> dict[str, Any]:
+        """Convert an SSIS WMI task to a placeholder activity."""
+        wql = task.properties.get("WqlQuerySource", "")
+        return {
+            "name": self._sanitize_name(task.name),
+            "type": "Wait",
+            "typeProperties": {
+                "waitTimeInSeconds": 1,
+            },
+            "description": (
+                f"TODO: Migrate {task.task_type.value} '{task.name}'. "
+                f"WQL: {wql}. "
+                "WMI tasks have no direct Fabric equivalent — "
+                "consider Azure Monitor or Logic Apps."
             ),
         }
 
