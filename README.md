@@ -12,12 +12,12 @@
 
 <p align="center">
   <a href="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml"><img src="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-  <img src="https://img.shields.io/badge/tests-1508%20passed-brightgreen?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-1536%20passed-brightgreen?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"/>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"/>
-  <img src="https://img.shields.io/badge/version-4.0.0-blue?style=flat-square" alt="Version"/>
-  <img src="https://img.shields.io/badge/CLI%20commands-30-orange?style=flat-square" alt="CLI Commands"/>
-  <img src="https://img.shields.io/badge/engine%20modules-29-orange?style=flat-square" alt="Engine Modules"/>
+  <img src="https://img.shields.io/badge/version-4.1.0-blue?style=flat-square" alt="Version"/>
+  <img src="https://img.shields.io/badge/CLI%20commands-31-orange?style=flat-square" alt="CLI Commands"/>
+  <img src="https://img.shields.io/badge/engine%20modules-30-orange?style=flat-square" alt="Engine Modules"/>
 </p>
 
 <p align="center">
@@ -848,7 +848,7 @@ Both use regex pattern matching. Add new patterns as `re.sub` or `re.match` bloc
 | **24** | **Performance** ✅ | 3.4.0 | Migration profiler, Spark optimizer, parallelism advisor, benchmarking |
 | **25** | **Enterprise Connectors** ✅ | 3.5.0 | SAP, Salesforce, Oracle/Teradata/DB2, S3/GCS/BigQuery, REST API migration |
 | **26** | **Intelligent Migration** ✅ | 4.0.0 | AI pattern recognition, LLM transpilation, smart strategy, NL queries |
-| **27** | **Package Decomposition** | 4.1.0 | Monolith splitting, subgraph extraction, reusable notebooks, ExecutePipeline links |
+| **27** | **Package Decomposition** ✅ | 4.1.0 | Monolith splitting, subgraph extraction, reusable notebooks, ExecutePipeline links |
 | **28** | **Validation Framework** | 4.2.0 | Test harness generation, schema drift detection, hash-based record comparison |
 | **29** | **Metadata Catalog** | 4.3.0 | Searchable metadata store, dependency matrix, Purview export |
 | **30** | **Multi-Cloud Targets** | 5.0.0 | Databricks, AWS Glue, GCP Dataflow output generators, target abstraction |

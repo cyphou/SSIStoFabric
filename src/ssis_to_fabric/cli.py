@@ -1600,3 +1600,55 @@ def smart_analyze(path: str, output: str) -> None:
 
     console.print(table)
     console.print(f"\n[green]Report: {report_path}[/green]")
+
+
+# ── Phase 27: Package Decomposition ─────────────────────────────────
+
+
+@main.command(name="decompose")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--min-tasks", default=8, type=int, help="Minimum tasks to consider for decomposition.")
+@click.option("--output", "-o", default="decomposition_report.json", help="Output report path.")
+def decompose(path: str, min_tasks: int, output: str) -> None:
+    """Analyze packages for decomposition into smaller Fabric pipelines."""
+    from ssis_to_fabric.engine.decomposition import (
+        create_decomposition_plan,
+        detect_candidates,
+        detect_shared_data_flows,
+        write_decomposition_report,
+    )
+
+    parser = DTSXParser()
+    p = Path(path)
+    packages = [parser.parse(p)] if p.is_file() else parser.parse_directory(p)
+
+    candidates = detect_candidates(packages, min_tasks=min_tasks)
+    plans = [
+        create_decomposition_plan(pkg) for pkg in packages
+        if len(getattr(pkg, "control_flow_tasks", [])) >= min_tasks
+    ]
+    shared_flows = detect_shared_data_flows(packages)
+
+    report_path = write_decomposition_report(candidates, plans, shared_flows, Path(output))
+
+    table = Table(title="Package Decomposition Analysis")
+    table.add_column("Package", style="cyan")
+    table.add_column("Tasks", justify="right")
+    table.add_column("Sub-pipelines", justify="right")
+    table.add_column("Score")
+    table.add_column("Reasons")
+
+    for c in candidates:
+        matching = [p for p in plans if p.package_name == c.package_name]
+        sub_count = str(matching[0].sub_pipelines.__len__()) if matching else "-"
+        table.add_row(
+            c.package_name, str(c.task_count), sub_count,
+            f"{c.score:.0%}", ", ".join(r.value for r in c.reasons),
+        )
+
+    console.print(table)
+
+    if shared_flows:
+        console.print(f"\n[yellow]{len(shared_flows)} shared data flows detected (DRY candidates)[/yellow]")
+
+    console.print(f"\n[green]Report: {report_path}[/green]")

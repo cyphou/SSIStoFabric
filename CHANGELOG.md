@@ -11,14 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > The following phases are planned. Each will be released as a minor or major version.
 
-### Phase 27 — Package Decomposition & Refactoring *(v4.1.0)*
-- Automatic detection of decomposition candidates (high task count, independent subgraphs)
-- Subgraph extraction: split one monolithic package into multiple Fabric pipelines with `ExecutePipeline` links
-- Shared data flow extraction into reusable notebooks (DRY principle)
-- Dependency-preserving split with topological validation
-- Decomposition preview: side-by-side view of original vs proposed split
-- `ssis2fabric decompose` CLI command with `--min-tasks` threshold
-
 ### Phase 28 — Migration Validation & Testing Framework *(v4.2.0)*
 - Generated test harnesses for each pipeline (mock data in → expected data out)
 - Schema drift detection between source SSIS destinations and Fabric lakehouse tables
@@ -90,6 +82,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Architecture target templates: medallion (bronze/silver/gold) mapping from SSIS stages
 - Migration wave planner: group packages into modernization waves by dependency and risk
 - `ssis2fabric modernize` CLI command with `--pattern medallion|event-driven|microservice`
+
+---
+
+## [4.1.0] - 2026-03-14
+
+### 🔪 Phase 27 — Package Decomposition & Refactoring
+- Automatic detection of decomposition candidates (high task count, independent subgraphs, mixed complexity)
+- Graph-based connected-component analysis to find independent subgraphs
+- Subgraph extraction: split monolithic packages into multiple sub-pipelines with dependency tracking
+- Phase-based splitting at fan-in/fan-out points for single-component packages
+- Shared data flow detection across packages (DRY candidates) with proposed notebook names
+- Decomposition plan with orchestrator pipeline and topological execution order
+- Side-by-side preview: original tasks vs proposed split
+- Plan validation: task coverage, duplicate detection, circular dependency checking
+- `ssis2fabric decompose` CLI command with `--min-tasks` threshold and Rich table output
+- JSON decomposition report with candidates, plans, and shared data flow analysis
 
 ---
 
