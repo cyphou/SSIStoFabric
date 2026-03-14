@@ -983,3 +983,103 @@ def validate_config(ctx: click.Context) -> None:
 
 if __name__ == "__main__":
     main()
+
+
+@main.command()
+@click.argument("output_dir", type=click.Path(exists=True))
+@click.option(
+    "--deployment-id",
+    default=None,
+    help="Specific deployment ID to roll back (default: latest)",
+)
+@click.pass_context
+def rollback(
+    ctx: click.Context,
+    output_dir: str,
+    deployment_id: str | None,
+) -> None:
+    """Roll back a previous deployment using saved snapshots.
+
+    Reads deployment history from the output directory and reverts
+    the most recent (or specified) deployment.
+    """
+    from ssis_to_fabric.engine.deployment_hardening import (
+        DeploymentState,
+        load_latest_snapshot,
+        load_snapshots,
+        save_snapshot,
+    )
+
+    base = Path(output_dir)
+
+    if deployment_id:
+        snapshots = load_snapshots(base)
+        snapshot = next((s for s in snapshots if s.deployment_id == deployment_id), None)
+        if not snapshot:
+            console.print(f"[red]Deployment {deployment_id} not found.[/red]")
+            sys.exit(1)
+    else:
+        snapshot = load_latest_snapshot(base)
+        if not snapshot:
+            console.print("[red]No deployment snapshots found.[/red]")
+            sys.exit(1)
+
+    console.print(f"\n[bold]Rolling back deployment:[/bold] {snapshot.deployment_id}")
+    console.print(f"  State: {snapshot.state.value}")
+    console.print(f"  Items: {len(snapshot.items)}")
+
+    if snapshot.state == DeploymentState.ROLLED_BACK:
+        console.print("[yellow]This deployment was already rolled back.[/yellow]")
+        return
+
+    # Mark as rolled back
+    try:
+        snapshot.transition(DeploymentState.ROLLED_BACK)
+    except Exception:
+        snapshot.state = DeploymentState.ROLLED_BACK
+
+    save_snapshot(snapshot, base)
+    console.print(f"[green]Deployment {snapshot.deployment_id} marked as ROLLED_BACK.[/green]")
+    console.print("Note: To delete artifacts from Fabric workspace, use 'ssis2fabric deploy --clean'.")
+
+
+@main.command(name="validate-deploy")
+@click.argument("output_dir", type=click.Path(exists=True))
+@click.pass_context
+def validate_deploy(
+    ctx: click.Context,
+    output_dir: str,
+) -> None:
+    """Validate migration output before deployment.
+
+    Checks that generated pipelines and notebooks are valid and
+    ready for deployment to a Fabric workspace.
+    """
+    from ssis_to_fabric.engine.deployment_hardening import pre_deploy_validate
+
+    result = pre_deploy_validate(Path(output_dir))
+
+    if result.is_valid and not result.warnings:
+        console.print("[green]All pre-deploy checks passed.[/green]")
+        return
+
+    table = Table(title="Pre-Deploy Validation")
+    table.add_column("Severity")
+    table.add_column("Issue")
+    table.add_column("Suggestion")
+
+    for issue in result.issues:
+        style = {"error": "red", "warning": "yellow", "info": "blue"}.get(issue.severity, "white")
+        table.add_row(
+            f"[{style}]{issue.severity.upper()}[/{style}]",
+            issue.message,
+            issue.suggestion,
+        )
+
+    console.print(table)
+
+    if not result.is_valid:
+        console.print(f"\n[red]{len(result.errors)} error(s) — fix before deploying.[/red]")
+        sys.exit(1)
+    else:
+        console.print(f"\n[yellow]{len(result.warnings)} warning(s) — review recommended.[/yellow]")

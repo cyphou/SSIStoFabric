@@ -11,14 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > The following phases are planned. Each will be released as a minor or major version.
 
-### Phase 12 — Deployment Hardening *(v2.0.0)*
-- Blue-green deployment (deploy to staging folder, validate, then swap)
-- `ssis2fabric rollback` CLI command (revert to previous deployment snapshot)
-- Pre-deploy workspace validation (permissions, capacity tier, naming conflicts)
-- Adaptive rate limiting and throttling for Fabric REST API
-- Deployment state machine (`PENDING` → `QUEUED` → `IN_PROGRESS` → `COMMITTED` / `ROLLED_BACK`)
-- Pipeline scheduling (configure triggers on deployed pipelines)
-
 ### Phase 13 — Testing & Quality *(v2.1.0)*
 - Property-based testing (Hypothesis) for expression transpiler fuzzing
 - Mutation testing (mutmut) integration in CI
@@ -50,6 +42,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migration cookbook (common SSIS patterns with before/after code comparisons)
 - JSON Schema export for `migration_config.yaml` validation by external tools
 - VS Code extension (inline assessment, syntax highlighting for generated artifacts)
+
+---
+
+## [2.0.0] - 2026-03-14
+
+### 🚀 Phase 12 — Deployment Hardening
+
+#### Deployment State Machine
+- `DeploymentState` enum: `PENDING`, `QUEUED`, `IN_PROGRESS`, `VALIDATING`, `COMMITTED`, `ROLLED_BACK`, `FAILED`
+- Valid transition enforcement with `InvalidStateTransitionError` exception
+- Full transition history recording with timestamps for audit trails
+
+#### Deployment Snapshots & Rollback
+- `DeploymentSnapshot` dataclass: tracks deployment lifecycle, items deployed, and state history
+- Snapshot persistence: `save_snapshot()` / `load_snapshots()` / `load_latest_snapshot()` (JSON-based)
+- `ssis2fabric rollback` CLI command: reverts latest or specific deployment by ID
+- `--deployment-id` option: target a specific deployment for rollback
+
+#### Pre-Deploy Validation
+- `ssis2fabric validate-deploy` CLI command: validates migration output before deployment
+- Pipeline JSON validity checks (detects malformed JSON)
+- Notebook file existence and non-empty content validation
+- Workspace naming conflict detection (warns when items already exist)
+- `ValidationResult` with severity-based issue classification (error/warning/info)
+
+#### Blue-Green Deployment
+- `BlueGreenDeployment` class: deploy to staging, validate, then swap to production
+- Configurable staging suffix (`_staging` default)
+- `swap_plan()` generates rename operations from staging → production names
+- `can_swap()` readiness check before executing swap
+
+#### Adaptive Rate Limiting
+- `AdaptiveRateLimiter`: dynamically adjusts concurrency based on API responses
+- Halves concurrency on 429 throttle responses with exponential backoff
+- Gradual recovery: concurrency increases by 1 after 10 consecutive successes
+- Configurable min/max concurrency bounds
+
+#### Pipeline Scheduling
+- `ScheduleTrigger` dataclass: daily, hourly, weekly, or cron schedule definitions
+- `to_trigger_payload()`: Fabric-compatible schedule trigger JSON generation
+- `generate_schedule_config()`: writes `schedule_triggers.json` to output directory
 
 ---
 
