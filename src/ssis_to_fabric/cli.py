@@ -1262,3 +1262,61 @@ def compliance_report(
     console.print(f"  Events: {report['total_events']}")
     console.print(f"  Packages: {report['unique_packages']}")
     console.print(f"  Report: {report_path}")
+
+
+# ── Phase 16: Developer Experience ──────────────────────────────────
+
+
+@main.command(name="schema-export")
+@click.option("--output", "-o", default="migration_config.schema.json", help="Output path for JSON Schema file.")
+def schema_export(output: str) -> None:
+    """Export JSON Schema for migration_config.yaml validation."""
+    from ssis_to_fabric.engine.developer_experience import write_json_schema
+
+    path = write_json_schema(Path(output))
+    console.print(f"[green]JSON Schema written to {path}[/green]")
+
+
+@main.command(name="generate-docs")
+@click.argument("output_dir", type=click.Path())
+@click.option("--cookbook/--no-cookbook", default=True, help="Generate migration cookbook.")
+@click.option("--adrs/--no-adrs", default=True, help="Generate Architecture Decision Records.")
+@click.option("--wizard/--no-wizard", default=True, help="Generate strategy decision tree HTML.")
+@click.option("--sphinx/--no-sphinx", default=True, help="Generate Sphinx docs/conf.py.")
+def generate_docs(
+    output_dir: str,
+    cookbook: bool,
+    adrs: bool,
+    wizard: bool,
+    sphinx: bool,
+) -> None:
+    """Generate developer documentation (cookbook, ADRs, wizard, Sphinx)."""
+    from ssis_to_fabric.engine.developer_experience import (
+        generate_adrs,
+        generate_cookbook,
+        write_decision_tree,
+        write_sphinx_conf,
+    )
+
+    base = Path(output_dir)
+    generated: list[str] = []
+
+    if cookbook:
+        p = generate_cookbook(base)
+        generated.append(f"Cookbook: {p}")
+
+    if adrs:
+        paths = generate_adrs(base)
+        generated.append(f"ADRs: {len(paths)} files")
+
+    if wizard:
+        p = write_decision_tree(base)
+        generated.append(f"Wizard: {p}")
+
+    if sphinx:
+        p = write_sphinx_conf(base)
+        generated.append(f"Sphinx: {p}")
+
+    console.print("[green]Documentation generated:[/green]")
+    for g in generated:
+        console.print(f"  • {g}")

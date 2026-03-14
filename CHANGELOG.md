@@ -9,15 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — Roadmap
 
-> The following phases are planned. Each will be released as a minor or major version.
+> All 16 phases are complete. Future work will be tracked here.
 
-### Phase 16 — Developer Experience *(v2.4.0)*
-- Sphinx API documentation auto-generated from docstrings
-- Architecture Decision Records (ADRs) for all major design choices
-- Interactive migration decision tree (HTML wizard for strategy selection)
-- Migration cookbook (common SSIS patterns with before/after code comparisons)
-- JSON Schema export for `migration_config.yaml` validation by external tools
-- VS Code extension (inline assessment, syntax highlighting for generated artifacts)
+---
+
+## [2.4.0] - 2026-03-14
+
+### 🛠️ Phase 16 — Developer Experience
+
+#### JSON Schema Export
+- `generate_config_json_schema()`: auto-generates JSON Schema from Pydantic `MigrationConfig`
+- `write_json_schema()`: writes schema file for external validation (VS Code, CI, pre-commit)
+- `ssis2fabric schema-export` CLI command with configurable output path
+- Schema includes `$schema` draft 2020-12 reference and descriptive title
+
+#### Architecture Decision Records (ADRs)
+- `ADR` dataclass: number, title, status, context, decision, consequences, date
+- 5 pre-defined project ADRs: Pydantic config, Click CLI, lxml parsing, hybrid strategy, plugin architecture
+- `generate_adrs()`: writes all ADRs + README index to `docs/adr/`
+- Markdown format with status tracking (Proposed, Accepted, Deprecated, Superseded)
+
+#### Migration Cookbook
+- 10 common SSIS-to-Fabric patterns with before/after code comparisons
+- Covers: data copy, derived columns, lookups, conditional splits, SCD Type 2, SQL tasks, loops, parent-child, aggregates, error handling
+- Each entry: title, description, complexity level, tags, SSIS pattern, Fabric equivalent
+- `generate_cookbook()`: writes `docs/migration_cookbook.md`
+- `get_cookbook_entries()`: programmatic access for tooling
+
+#### Interactive Decision Tree
+- HTML wizard for migration strategy selection (Spark, Data Factory, Hybrid)
+- Self-contained: inline CSS + JavaScript, no external dependencies
+- `write_decision_tree()`: outputs `docs/strategy_wizard.html`
+
+#### Sphinx Documentation
+- `generate_sphinx_conf()`: creates `docs/conf.py` with autodoc, napoleon, viewcode, intersphinx
+- `write_sphinx_conf()`: generates conf.py + index.rst with API module references
+- Configured for furo theme with Google-style docstring support
+
+#### CLI Commands
+- `ssis2fabric schema-export`: export JSON Schema for config validation
+- `ssis2fabric generate-docs`: generate cookbook, ADRs, wizard, and Sphinx config (each toggleable)
 
 ---
 
