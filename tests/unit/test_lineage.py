@@ -4,6 +4,7 @@ Unit tests for the data lineage graph & impact analysis module.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -117,8 +118,6 @@ class TestLineageGraph:
 
     @pytest.mark.unit
     def test_to_d3_json_output(self, simple_graph: LineageGraph) -> None:
-        import json
-
         d3 = simple_graph.to_d3_json()
         data = json.loads(d3)
         assert "nodes" in data
@@ -312,8 +311,6 @@ class TestLineageBuilder:
 
     @pytest.mark.unit
     def test_d3_export(self, simple_package: SSISPackage) -> None:
-        import json
-
         graph = LineageBuilder().build([simple_package])
         d3 = graph.to_d3_json()
         data = json.loads(d3)
@@ -379,8 +376,6 @@ class TestLineageWithFixtures:
 
     @pytest.mark.unit
     def test_d3_export_from_fixtures(self, packages: list[SSISPackage]) -> None:
-        import json
-
         graph = LineageBuilder().build(packages)
         d3 = graph.to_d3_json()
         data = json.loads(d3)
