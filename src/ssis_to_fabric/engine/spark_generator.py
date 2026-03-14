@@ -525,6 +525,14 @@ class SparkNotebookGenerator:
 
     def _generate_transformation(self, comp: DataFlowComponent) -> str:
         """Generate PySpark code for a transformation component."""
+        from ssis_to_fabric.engine.plugin_registry import get_component_registry
+
+        registry = get_component_registry()
+        handler = registry.get(comp.component_type.value)
+        if handler is not None:
+            ctx = {"generator": self, "config": self.config}
+            return handler.generate_pyspark(comp, ctx)
+
         if comp.component_type == DataFlowComponentType.DERIVED_COLUMN:
             return self._gen_derived_column(comp)
         elif comp.component_type == DataFlowComponentType.CONDITIONAL_SPLIT:
@@ -1348,6 +1356,12 @@ class SparkNotebookGenerator:
             return "F.lit(None)"
 
         result = expr.strip()
+
+        # Apply custom expression rules (plugin system)
+        from ssis_to_fabric.engine.plugin_registry import get_expression_rules
+
+        for rule in get_expression_rules("pyspark"):
+            result = rule.pattern.sub(rule.replacement, result)
 
         # ------------------------------------------------------------------
         # Internal helpers (mirrors M transpiler architecture)

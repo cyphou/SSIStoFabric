@@ -334,6 +334,14 @@ class DataflowGen2Generator:
 
         Returns (step_name, m_expression).
         """
+        from ssis_to_fabric.engine.plugin_registry import get_component_registry
+
+        registry = get_component_registry()
+        handler = registry.get(comp.component_type.value)
+        if handler is not None:
+            ctx = {"generator": self, "config": self.config}
+            return handler.generate_m(comp, prev_step, ctx)
+
         if comp.component_type == DataFlowComponentType.DERIVED_COLUMN:
             return self._gen_derived_column_pq(comp, prev_step)
         elif comp.component_type == DataFlowComponentType.LOOKUP:
@@ -670,6 +678,12 @@ class DataflowGen2Generator:
             return "null"
 
         expr = expr.strip()
+
+        # Apply custom expression rules (plugin system)
+        from ssis_to_fabric.engine.plugin_registry import get_expression_rules
+
+        for rule in get_expression_rules("m"):
+            expr = rule.pattern.sub(rule.replacement, expr)
 
         # ------------------------------------------------------------------
         # Internal helpers

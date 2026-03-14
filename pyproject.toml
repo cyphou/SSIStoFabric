@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ssis-to-fabric"
-version = "1.6.0"
+version = "1.7.0"
 description = "Production-ready migration tool: SSIS packages to Microsoft Fabric (Data Factory pipelines & Spark notebooks)"
 readme = "README.md"
 license = {text = "MIT"}
@@ -62,6 +62,10 @@ regression = [
 
 [project.scripts]
 ssis2fabric = "ssis_to_fabric.cli:main"
+
+[project.entry-points."ssis_to_fabric.plugins"]
+# Third-party plugins register here, e.g.:
+# my_plugin = "my_package:register_plugin"
 
 [tool.setuptools.packages.find]
 where = ["src"]

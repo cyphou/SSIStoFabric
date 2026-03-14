@@ -264,11 +264,18 @@ class MigrationEngine:
         self.spark_generator = SparkNotebookGenerator(config)
         self.plan: MigrationPlan | None = None
 
+        from ssis_to_fabric.engine.plugin_registry import get_hook_manager
+        self._hooks = get_hook_manager()
+
     def create_plan(self, packages: list[SSISPackage]) -> MigrationPlan:
         """
         Create a migration plan from analyzed SSIS packages.
         Determines the target artifact type for each task.
         """
+        self._hooks.fire("pre_plan", {
+            "packages": [p.name for p in packages],
+        })
+
         plan = MigrationPlan(
             project_name=self.config.project_name,
             strategy=self.config.strategy.value,
@@ -288,6 +295,11 @@ class MigrationEngine:
         # Compute summary
         plan.summary = self._compute_summary(plan)
         self.plan = plan
+
+        self._hooks.fire("post_plan", {
+            "plan": plan,
+            "total_items": len(plan.items),
+        })
 
         logger.info(
             "migration_plan_created",
@@ -405,6 +417,13 @@ class MigrationEngine:
         # Build a lookup of packages by name
         pkg_map = {pkg.name: pkg for pkg in packages}
 
+        # Fire pre_generate hook
+        self._hooks.fire("pre_generate", {
+            "packages": [p.name for p in packages],
+            "plan": plan,
+            "output_dir": str(output_dir),
+        })
+
         # --- Phase 1: Generate standalone artifacts (dataflows, notebooks) ---
         _cb = progress_callback
         phase1_start = time.monotonic()
@@ -514,6 +533,14 @@ class MigrationEngine:
         phase2_ms = (time.monotonic() - phase2_start) * 1000
         if _cb:
             _cb("phase_completed", {"phase": "phase2_pipelines", "elapsed_ms": phase2_ms})
+
+        # Fire post_generate hook
+        self._hooks.fire("post_generate", {
+            "plan": plan,
+            "output_dir": str(output_dir),
+            "phase1_ms": phase1_ms,
+            "phase2_ms": phase2_ms,
+        })
 
         # --- Phase 3: Generate connection manifests ---
         self._generate_connection_manifests(packages, output_dir)

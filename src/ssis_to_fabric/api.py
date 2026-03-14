@@ -165,10 +165,19 @@ class SSISMigrator:
         if not p.exists():
             raise FileNotFoundError(f"Path does not exist: {p}")
 
+        from ssis_to_fabric.engine.plugin_registry import get_hook_manager
+        hooks = get_hook_manager()
+        hooks.fire("pre_parse", {"path": str(p)})
+
         packages = [self._parser.parse(p)] if p.is_file() else self._parser.parse_directory(p)
 
         if not packages:
             raise ValueError(f"No SSIS packages found at: {p}")
+
+        hooks.fire("post_parse", {
+            "path": str(p),
+            "packages": [pkg.name for pkg in packages],
+        })
 
         return packages
 
@@ -311,7 +320,24 @@ class SSISMigrator:
         if clean and not dry_run:
             deployer.delete_all_items()
 
-        return deployer.deploy_all(deploy_dir)
+        from ssis_to_fabric.engine.plugin_registry import get_hook_manager
+        hooks = get_hook_manager()
+        hooks.fire("pre_deploy", {
+            "workspace_id": workspace_id,
+            "output_dir": str(deploy_dir),
+            "dry_run": dry_run,
+        })
+
+        result = deployer.deploy_all(deploy_dir)
+
+        hooks.fire("post_deploy", {
+            "workspace_id": workspace_id,
+            "output_dir": str(deploy_dir),
+            "dry_run": dry_run,
+            "result": result,
+        })
+
+        return result
 
     # ------------------------------------------------------------------
     # 5. Validate

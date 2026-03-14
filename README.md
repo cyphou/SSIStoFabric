@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/tests-964%20passed-brightgreen?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"/>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"/>
-  <img src="https://img.shields.io/badge/version-1.6.0-blue?style=flat-square" alt="Version"/>
+  <img src="https://img.shields.io/badge/version-1.7.0-blue?style=flat-square" alt="Version"/>
   <img src="https://img.shields.io/badge/pipelines-28-orange?style=flat-square" alt="Pipelines"/>
   <img src="https://img.shields.io/badge/notebooks-28-orange?style=flat-square" alt="Notebooks"/>
 </p>
@@ -224,7 +224,7 @@ SSISToFabric/
 │   ├── api.py                          # Public Python API (SSISMigrator facade)
 │   ├── config.py                       # Configuration management
 │   └── logging_config.py              # Structured logging (structlog)
-├── tests/                              # 964 tests across unit + regression
+├── tests/                              # 1013 tests across unit + regression
 ├── examples/                           # 12 scenarios + full SSIS project (28 packages)
 ├── azure-pipelines.yml                 # Azure DevOps CI/CD
 ├── .github/workflows/ci.yml           # GitHub Actions CI/CD
@@ -601,7 +601,7 @@ ssis2fabric extract-ssisdb "<conn-str>" --folder MyFolder --project MyProject
 </p>
 
 ```bash
-pytest tests/ -v                                     # Run all 964+ tests
+pytest tests/ -v                                     # Run all 1013+ tests
 pytest tests/unit/ -v                                # Unit tests only
 pytest tests/unit/test_api.py -v                     # API facade tests
 pytest tests/unit/test_automation_features.py -v     # Expression transpiler tests
@@ -633,7 +633,7 @@ pytest tests/ --cov=ssis_to_fabric --cov-report=html # Coverage report
 
 ```mermaid
 flowchart LR
-    L["🔍 Lint\nruff + mypy"] --> T["🧪 Test\n964 tests\nPy 3.10–3.13"]
+    L["🔍 Lint\nruff + mypy"] --> T["🧪 Test\n1013 tests\nPy 3.10–3.13"]
     T --> R["✅ Regression\nBaseline\nvalidation"]
     R --> D["📦 Dry Run\nSample migration"]
     D --> P["🚀 Deploy\nFabric workspace"]
@@ -764,7 +764,7 @@ Both use regex pattern matching. Add new patterns as `re.sub` or `re.match` bloc
 | ~~6~~ | ~~Fidelity & Scale~~ | ~~1.4.0~~ | ~~SQL injection fix, shared utils, DAG-aware Spark, unified transpiler~~ |
 | **7** | **Observability** ✅ | 1.5.0 | Correlation IDs, per-artifact timing, audit logging, progress callbacks, SVG report charts |
 | **8** | **Transpiler Completeness** ✅ | 1.6.0 | Bitwise ops, recursive nesting, C# AST transpiler, expression validation, trig/math functions |
-| **9** | **Plugin Architecture** | 1.7.0 | Component handler registry, custom transpilers, hook system, entry_points |
+| **9** | **Plugin Architecture** ✅ | 1.7.0 | Component handler registry, custom transpilers, hook system, entry_points |
 | **10** | **Advanced SSIS** | 1.8.0 | Transactions, checkpoints, disabled tasks, logging providers, WMI/WebService |
 | **11** | **Column Lineage** | 1.9.0 | Column-level lineage, transformation tracking, D3.js Sankey visualization |
 | **12** | **Deploy Hardening** | 2.0.0 | Blue-green deployment, rollback CLI, rate limiting, state machine |

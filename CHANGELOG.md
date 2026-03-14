@@ -11,13 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > The following phases are planned. Each will be released as a minor or major version.
 
-### Phase 9 — Plugin Architecture *(v1.7.0)*
-- `TransformationStrategy` protocol for custom component generators
-- Component handler registry (register/unregister handlers at runtime via decorators)
-- Custom expression transpiler injection (user-supplied expression rules)
-- Plugin discovery via Python `entry_points` (third-party pip packages can extend the tool)
-- Hook system: `pre_parse`, `post_generate`, `pre_deploy`, `post_deploy` lifecycle events
-
 ### Phase 10 — Advanced SSIS Features *(v1.8.0)*
 - Transaction scope support (`Required`/`Supported` → pipeline activity groups with error handling)
 - Checkpoint/restart (idempotent re-runs with checkpoint state persistence and resume)
@@ -72,6 +65,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migration cookbook (common SSIS patterns with before/after code comparisons)
 - JSON Schema export for `migration_config.yaml` validation by external tools
 - VS Code extension (inline assessment, syntax highlighting for generated artifacts)
+
+---
+
+## [1.7.0] - 2026-03-14
+
+### ✨ Phase 9 — Plugin Architecture
+
+#### TransformationStrategy Protocol
+- `TransformationStrategy` runtime-checkable protocol: `can_handle()`, `generate_pyspark()`, `generate_m()`
+- Custom handlers override built-in generator logic for any SSIS data flow component type
+- Context dict passes `generator`, `config` to handler for full access
+
+#### Component Handler Registry
+- `ComponentRegistry` class: `register()`, `unregister()`, `get()`, `has()`, `clear()`
+- `@component_handler("ComponentType")` class decorator for declarative registration
+- Global singleton via `get_component_registry()`
+- Custom handlers take precedence; built-in generator falls through when absent
+
+#### Lifecycle Hook System
+- `HookManager` with 8 lifecycle events: `pre_parse`, `post_parse`, `pre_plan`, `post_plan`, `pre_generate`, `post_generate`, `pre_deploy`, `post_deploy`
+- Hooks invoked in registration order; return value chains through subsequent callbacks
+- `@hook("event_name")` function decorator for declarative registration
+- Exceptions in hooks are logged but do not halt migration
+- `MigrationEngine.create_plan()` fires `pre_plan` / `post_plan`
+- `MigrationEngine.execute()` fires `pre_generate` / `post_generate`
+- `SSISMigrator.analyze()` fires `pre_parse` / `post_parse`
+- `SSISMigrator.deploy()` fires `pre_deploy` / `post_deploy`
+
+#### Custom Expression Transpiler Rules
+- `register_expression_rule(pattern, replacement, target, priority)` for user-supplied regex rules
+- Rules can target `"pyspark"`, `"m"`, or `"both"` transpilers
+- Priority-ordered: higher priority rules applied first
+- Callable replacements supported: `(re.Match) -> str`
+- Rules applied at the start of transpiler before built-in patterns
+
+#### Plugin Discovery via entry_points
+- `discover_plugins(group="ssis_to_fabric.plugins")` loads third-party pip packages
+- Each plugin receives `(registry, hooks, add_expr_rule)` for full extensibility
+- `[project.entry-points."ssis_to_fabric.plugins"]` in `pyproject.toml`
+- Failed plugins logged and skipped without halting
+
+#### Infrastructure
+- `reset_all()` helper clears all registries (test isolation)
+- 49 new tests (1013 total)
 
 ---
 
