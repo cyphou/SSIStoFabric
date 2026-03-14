@@ -738,6 +738,48 @@ Both use regex pattern matching. Add new patterns as `re.sub` or `re.match` bloc
 
 ---
 
+## 🗺️ Roadmap
+
+> Phases 1–6 are complete. The following phases are planned — see [CHANGELOG.md](CHANGELOG.md) for details.
+
+| Phase | Name | Version | Focus |
+|-------|------|---------|-------|
+| ~~1~~ | ~~Hardening~~ | ~~1.2.0~~ | ~~Expression parity, error handling, retry, structured errors~~ |
+| ~~2~~ | ~~Ecosystem~~ | ~~1.2.0~~ | ~~Lakehouse provisioner, HTML report, lineage, PyPI, Docker~~ |
+| ~~3~~ | ~~Enterprise~~ | ~~1.2.0~~ | ~~C# transpiler, multi-workspace, incremental migration~~ |
+| ~~4~~ | ~~Multi-Agent~~ | ~~1.2.0~~ | ~~Parallel agent orchestration (DataflowAgent, SparkAgent, PipelineAgent)~~ |
+| ~~5~~ | ~~Quality~~ | ~~1.3.0~~ | ~~Event handlers, assessment scoring, config validation, dry-run~~ |
+| ~~6~~ | ~~Fidelity & Scale~~ | ~~1.4.0~~ | ~~SQL injection fix, shared utils, DAG-aware Spark, unified transpiler~~ |
+| **7** | **Observability** | 1.5.0 | OpenTelemetry tracing, performance metrics, audit logging, progress callbacks |
+| **8** | **Transpiler Completeness** | 1.6.0 | Bitwise ops, C# AST transpiler, expression validation, full M parity |
+| **9** | **Plugin Architecture** | 1.7.0 | Component handler registry, custom transpilers, hook system, entry_points |
+| **10** | **Advanced SSIS** | 1.8.0 | Transactions, checkpoints, disabled tasks, logging providers, WMI/WebService |
+| **11** | **Column Lineage** | 1.9.0 | Column-level lineage, transformation tracking, D3.js Sankey visualization |
+| **12** | **Deploy Hardening** | 2.0.0 | Blue-green deployment, rollback CLI, rate limiting, state machine |
+| **13** | **Testing & Quality** | 2.1.0 | Hypothesis fuzzing, mutation testing, E2E harness, benchmarks |
+| **14** | **Integrations** | 2.2.0 | Key Vault, Power BI, dbt, Slack/Teams webhooks, GitHub Action |
+| **15** | **Enterprise Scale** | 2.3.0 | RBAC, multi-tenant, queue-based orchestration, horizontal scaling |
+| **16** | **Developer Experience** | 2.4.0 | Sphinx docs, ADRs, migration cookbook, JSON Schema, VS Code extension |
+
+---
+
+## ⚠️ Known Limitations
+
+| Area | Limitation | Workaround |
+|------|-----------|------------|
+| **Script Tasks** | C# → Python transpilation is regex-based; complex .NET code produces `# TODO` stubs | Manual review of generated Python skeletons |
+| **Expressions** | Bitwise operators (`BITAND`, `BITOR`, `BITXOR`) not yet supported | Manual conversion (Phase 8) |
+| **Event Handlers** | Only `OnError` fully converted; other handlers emit placeholder Wait activities | Review and customize generated placeholders |
+| **SCD** | Only Type 2 supported; Type 1/3+ produce skeletons | Extend merge logic manually |
+| **Transactions** | SSIS transaction scopes (`Required`/`Supported`) not migrated | Add error handling manually (Phase 10) |
+| **Checkpoints** | Restart-from-checkpoint not supported | Use incremental mode as alternative |
+| **Logging Providers** | SSIS log providers (SQL, XML, text) not migrated | Configure Fabric monitoring manually |
+| **Lineage** | Table-level only; no column-level tracking | Column lineage planned for Phase 11 |
+| **Disabled Tasks** | All tasks are generated regardless of `Disabled` property | Remove unwanted activities manually |
+| **Nested Containers** | Sequence containers are flattened (no true nesting) | Dependency graph preserves execution order |
+
+---
+
 ## 🤝 Contributing
 
 Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

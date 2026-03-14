@@ -8,7 +8,7 @@ Thank you for your interest in contributing! This guide covers the development s
 
 ### Prerequisites
 
-- Python 3.10+ (tested on 3.10–3.12)
+- Python 3.10+ (tested on 3.10–3.13)
 - Git
 
 ### Getting Started
@@ -37,15 +37,31 @@ See the [README](README.md) for a detailed architecture overview.
 
 ```
 src/ssis_to_fabric/
-├── analyzer/     → SSIS package parsing (.dtsx XML → models)
-├── engine/       → Migration generators (pipelines, dataflows, notebooks)
-├── testing/      → Non-regression baseline validation
-├── cli.py        → CLI entry point (ssis2fabric)
-├── api.py        → Public Python API (SSISMigrator facade)
-├── config.py     → Configuration management
+├── analyzer/         → SSIS package parsing (.dtsx XML → models)
+│   ├── models.py    →   Data models (SSISPackage, Variable, Task, DataFlowComponent, etc.)
+│   └── dtsx_parser.py →  .dtsx XML parser + Project.params reader
+├── engine/           → Migration generators & deployment
+│   ├── migration_engine.py    → Orchestration, routing & plan generation
+│   ├── data_factory_generator.py → ADF pipeline JSON generation
+│   ├── dataflow_generator.py     → Dataflow Gen2 (Power Query M) + expression transpiler
+│   ├── spark_generator.py        → PySpark notebook + expression transpiler
+│   ├── expression_transpiler.py  → Unified expression transpiler facade
+│   ├── utils.py                  → Shared generator utilities
+│   ├── fabric_deployer.py        → Fabric REST API deployment
+│   ├── csharp_transpiler.py      → C# Script Task → Python transpiler
+│   ├── lineage.py                → Data lineage graph builder
+│   ├── report_generator.py       → HTML migration report
+│   ├── lakehouse_provisioner.py  → DDL generation for Lakehouse/Warehouse
+│   ├── ssisdb_extractor.py       → SSISDB catalog .dtsx extraction
+│   └── agents.py                 → Multi-agent parallel orchestration
+├── testing/          → Non-regression baseline validation
+│   └── regression_runner.py
+├── cli.py            → CLI entry point (ssis2fabric)
+├── api.py            → Public Python API (SSISMigrator facade)
+├── config.py         → Configuration management (Pydantic)
 └── logging_config.py → Structured logging (structlog)
-tests/            → 492 tests (478 unit + 14 regression)
-examples/         → 12 scenarios + 28 real SSIS packages
+tests/                → 806 tests (792 unit + 14 regression)
+examples/             → 12 scenarios + 28 real SSIS packages
 ```
 
 ---
@@ -76,7 +92,7 @@ mypy src/ssis_to_fabric/ --ignore-missing-imports  # Type check
 ## 🧪 Testing
 
 ```bash
-# All tests (492)
+# All tests (806+)
 pytest tests/ -v
 
 # Unit tests only
@@ -159,23 +175,30 @@ docs: update README with new component support table
 
 ## 🎯 Areas for Contribution
 
-### High Priority
+See the [Roadmap](README.md#-roadmap) for the full Phase 7–16 plan.
 
-- Additional SSIS expression patterns (see expression transpiler)
-- New data source connectors for Dataflow Gen2
-- Performance optimization for large projects
+### High Priority (Phase 7–8)
 
-### Medium Priority
+- OpenTelemetry tracing and correlation IDs for agent orchestration
+- Bitwise operator support (`BITAND`, `BITOR`, `BITXOR`) in expression transpilers
+- C# transpiler AST mode (tree-walk parser replacing regex for complex scripts)
+- Interactive charts in HTML migration report
 
-- Additional SSIS component types
-- Enhanced deployment error handling
-- Integration tests with Fabric workspace
+### Medium Priority (Phase 9–11)
 
-### Low Priority
+- Plugin architecture: `TransformationStrategy` protocol for custom generators
+- Transaction scope support for SSIS `Required`/`Supported` semantics
+- Column-level lineage tracking through transformations
+- WMI Event Watcher, Web Service, and XML Task generation
 
-- API documentation generation (sphinx/pdoc)
-- Property-based testing for expression conversion
-- Schema validation against Microsoft's published schemas
+### Low Priority (Phase 12–16)
+
+- Blue-green deployment and rollback CLI command
+- Property-based testing (Hypothesis) for expression transpiler fuzzing
+- Azure Key Vault secret resolution for connection credentials
+- Power BI dataset generation from lineage graph
+- VS Code extension for inline migration assessment
+- Sphinx-generated API documentation
 
 ---
 

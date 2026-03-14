@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] — Roadmap
+
+> The following phases are planned. Each will be released as a minor or major version.
+
+### Phase 7 — Observability & Diagnostics *(v1.5.0)*
+- OpenTelemetry tracing with correlation IDs across agents and generators
+- Per-artifact performance metrics (parse time, generate time, deploy time)
+- Interactive HTML report with embedded charts (SVG sparklines, status pie charts)
+- Audit logging (who ran what migration, when, with which config)
+- Progress callbacks for long-running operations (CLI progress bars, API hooks)
+
+### Phase 8 — Expression & Transpiler Completeness *(v1.6.0)*
+- Bitwise operators (`BITAND`, `BITOR`, `BITXOR`) in both PySpark and M
+- Deeply nested expression handling (10+ levels) with stack-based evaluator
+- C# transpiler AST mode (tree-walk parser for complex Script Tasks, replacing fragile regex)
+- Expression validation & error reporting (detect invalid references, type mismatches)
+- Full Power Query M parity for all remaining expression gaps (array subscripting, escaped quotes)
+
+### Phase 9 — Plugin Architecture *(v1.7.0)*
+- `TransformationStrategy` protocol for custom component generators
+- Component handler registry (register/unregister handlers at runtime via decorators)
+- Custom expression transpiler injection (user-supplied expression rules)
+- Plugin discovery via Python `entry_points` (third-party pip packages can extend the tool)
+- Hook system: `pre_parse`, `post_generate`, `pre_deploy`, `post_deploy` lifecycle events
+
+### Phase 10 — Advanced SSIS Features *(v1.8.0)*
+- Transaction scope support (`Required`/`Supported` → pipeline activity groups with error handling)
+- Checkpoint/restart (idempotent re-runs with checkpoint state persistence and resume)
+- Disabled task handling (skip generation or emit commented-out code)
+- Logging provider migration (SSIS SQL/XML/text log providers → Fabric monitoring config)
+- WMI Event Watcher, Web Service, and XML Task generation (currently routed to MANUAL)
+- Package annotation preservation in generated artifacts as comments
+
+### Phase 11 — Column-Level Lineage *(v1.9.0)*
+- Column-level lineage tracking (source column → transformation → destination column)
+- Transformation semantics in lineage graph (JOIN, FILTER, DERIVE, AGGREGATE)
+- Column-level impact analysis (`lineage impact --column dbo.Sales.Amount`)
+- Interactive lineage visualization (D3.js Sankey diagrams in HTML report)
+- Cross-package column tracing (Execute Package parameter → child column mapping)
+
+### Phase 12 — Deployment Hardening *(v2.0.0)*
+- Blue-green deployment (deploy to staging folder, validate, then swap)
+- `ssis2fabric rollback` CLI command (revert to previous deployment snapshot)
+- Pre-deploy workspace validation (permissions, capacity tier, naming conflicts)
+- Adaptive rate limiting and throttling for Fabric REST API
+- Deployment state machine (`PENDING` → `QUEUED` → `IN_PROGRESS` → `COMMITTED` / `ROLLED_BACK`)
+- Pipeline scheduling (configure triggers on deployed pipelines)
+
+### Phase 13 — Testing & Quality *(v2.1.0)*
+- Property-based testing (Hypothesis) for expression transpiler fuzzing
+- Mutation testing (mutmut) integration in CI
+- E2E test harness (Docker Compose with SQL Server + sample SSISDB + automated migration)
+- Generated code validation (PySpark `ast.parse()`, M syntax checker)
+- Performance benchmarks (pytest-benchmark) with regression tracking
+- Visual regression for HTML reports (screenshot comparison)
+
+### Phase 14 — Integrations & Ecosystem *(v2.2.0)*
+- Azure Key Vault secret resolution for connection credentials
+- Power BI dataset generation from lineage graph
+- dbt model scaffolding from generated Spark notebooks
+- Webhook notifications (Slack, Microsoft Teams, email) on migration events
+- GitHub Actions marketplace action (`ssis-to-fabric-action`)
+- `ssis2fabric init` command to generate starter `migration_config.yaml`
+
+### Phase 15 — Enterprise Scale *(v2.3.0)*
+- RBAC support (role-based package-level access control with Azure AD groups)
+- Multi-tenant migration (parallel deployment to multiple workspace targets)
+- Queue-based migration orchestration (async job processing with progress tracking)
+- Horizontal scaling (distribute work across machines via Redis/Azure Queue)
+- Cost estimation (Fabric CU consumption projections per generated artifact)
+- Compliance reporting (data flow audit trail for SOC2/GDPR)
+
+### Phase 16 — Developer Experience *(v2.4.0)*
+- Sphinx API documentation auto-generated from docstrings
+- Architecture Decision Records (ADRs) for all major design choices
+- Interactive migration decision tree (HTML wizard for strategy selection)
+- Migration cookbook (common SSIS patterns with before/after code comparisons)
+- JSON Schema export for `migration_config.yaml` validation by external tools
+- VS Code extension (inline assessment, syntax highlighting for generated artifacts)
+
+---
+
 ## [1.4.0] - 2026-03-14
 
 ### ✨ Phase 6 — Fidelity & Scale
