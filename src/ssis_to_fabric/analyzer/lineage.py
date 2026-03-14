@@ -241,14 +241,14 @@ def _mermaid_safe_id(raw: str) -> str:
 
 
 def _mermaid_escape(text: str) -> str:
-    return text.replace('"', "#quot;")
+    return text.replace('"', "&quot;")
 
 
 def _mermaid_shape(node_type: LineageNodeType, safe_id: str, label: str) -> str:
     if node_type == LineageNodeType.TABLE:
         return f'{safe_id}[("{label}")]'
     if node_type == LineageNodeType.FILE:
-        return f'{safe_id}>{"{label}"}]'
+        return f"{safe_id}>{label}]"
     if node_type == LineageNodeType.TRANSFORMATION:
         return f"{safe_id}{{{label}}}"
     if node_type == LineageNodeType.PACKAGE:
