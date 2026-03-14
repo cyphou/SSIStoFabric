@@ -705,6 +705,12 @@ def report(ctx: click.Context, output_dir: str) -> None:
     help="Show impact analysis for a specific table (e.g. dbo.FactSales)",
 )
 @click.option(
+    "--column",
+    "-c",
+    default=None,
+    help="Show column-level impact analysis (e.g. dbo.Sales.Amount)",
+)
+@click.option(
     "--output",
     "-o",
     type=click.Path(),
@@ -716,15 +722,17 @@ def lineage(
     ctx: click.Context,
     path: str,
     table: str | None,
+    column: str | None,
     output: str | None,
 ) -> None:
     """Analyse data lineage across SSIS packages.
 
     Builds a directed graph of table dependencies and optionally performs
-    impact analysis for a specific table.
+    impact analysis for a specific table or column.
 
     PATH may be a single ``.dtsx`` file or a directory containing packages.
     """
+    from ssis_to_fabric.engine.column_lineage import ColumnLineageGraph
     from ssis_to_fabric.engine.lineage import LineageGraph
 
     parser = DTSXParser()
@@ -734,7 +742,21 @@ def lineage(
     graph = LineageGraph()
     graph.build(packages)
 
-    if table:
+    if column:
+        col_graph = ColumnLineageGraph()
+        col_graph.build(packages)
+        impact = col_graph.column_impact(column)
+        console.print(f"\n[bold]Column impact analysis for:[/bold] {column}")
+        console.print(f"  Upstream edges: {len(impact['upstream'])}")
+        for e in impact["upstream"]:
+            console.print(f"    ← {e['source_table']}.{e['source_column']} ({e['transformation']})")
+        console.print(f"  Downstream edges: {len(impact['downstream'])}")
+        for e in impact["downstream"]:
+            console.print(f"    → {e['destination_table']}.{e['destination_column']} ({e['transformation']})")
+        if output:
+            col_graph.write_json(Path(output))
+            console.print(f"\n[green]Column lineage JSON written to:[/green] {output}")
+    elif table:
         impact = graph.impact(table)
         console.print(f"\n[bold]Impact analysis for table:[/bold] {table}")
         console.print(f"  Readers: {', '.join(impact['readers']) or '(none)'}")

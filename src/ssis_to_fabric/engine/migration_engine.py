@@ -583,7 +583,7 @@ class MigrationEngine:
         # Write migration report
         plan.completed_at = datetime.now(tz=timezone.utc).isoformat()
         plan.total_elapsed_ms = (time.monotonic() - execution_start) * 1000
-        self._write_report(plan, output_dir)
+        self._write_report(plan, output_dir, packages)
 
         completed_count = sum(1 for i in plan.items if i.status == "completed")
         error_count = sum(1 for i in plan.items if i.status == "error")
@@ -729,11 +729,26 @@ class MigrationEngine:
             "complexity_breakdown": complexity_counts,
         }
 
-    def _write_report(self, plan: MigrationPlan, output_dir: Path) -> None:
+    def _write_report(self, plan: MigrationPlan, output_dir: Path, packages: list[SSISPackage] | None = None) -> None:
         """Write migration report to output directory."""
+        report_data = plan.to_dict()
+
+        # Generate column lineage and embed Sankey data in report
+        if packages:
+            from ssis_to_fabric.engine.column_lineage import ColumnLineageGraph
+
+            col_graph = ColumnLineageGraph()
+            col_graph.build(packages)
+            if col_graph.edges:
+                col_graph.write_json(output_dir)
+                report_data["column_lineage"] = {
+                    "sankey": col_graph.to_sankey_data(),
+                    "summary": col_graph.to_dict()["summary"],
+                }
+
         report_path = output_dir / "migration_report.json"
         with open(report_path, "w") as f:
-            json.dump(plan.to_dict(), f, indent=2)
+            json.dump(report_data, f, indent=2)
         logger.info("report_written", path=str(report_path))
 
     # =========================================================================

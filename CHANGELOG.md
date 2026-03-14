@@ -11,13 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > The following phases are planned. Each will be released as a minor or major version.
 
-### Phase 11 — Column-Level Lineage *(v1.9.0)*
-- Column-level lineage tracking (source column → transformation → destination column)
-- Transformation semantics in lineage graph (JOIN, FILTER, DERIVE, AGGREGATE)
-- Column-level impact analysis (`lineage impact --column dbo.Sales.Amount`)
-- Interactive lineage visualization (D3.js Sankey diagrams in HTML report)
-- Cross-package column tracing (Execute Package parameter → child column mapping)
-
 ### Phase 12 — Deployment Hardening *(v2.0.0)*
 - Blue-green deployment (deploy to staging folder, validate, then swap)
 - `ssis2fabric rollback` CLI command (revert to previous deployment snapshot)
@@ -57,6 +50,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migration cookbook (common SSIS patterns with before/after code comparisons)
 - JSON Schema export for `migration_config.yaml` validation by external tools
 - VS Code extension (inline assessment, syntax highlighting for generated artifacts)
+
+---
+
+## [1.9.0] - 2026-03-14
+
+### ✨ Phase 11 — Column-Level Lineage
+
+#### Column-Level Lineage Tracking
+- `ColumnLineageGraph` class: builds column-level DAG from parsed SSIS packages
+- `ColumnEdge` dataclass: source_table, source_column → destination_table, destination_column
+- BFS-based column tracing through data flow component chains (source → transforms → destination)
+- Column name matching: source output columns tracked through intermediate transforms to destination inputs
+
+#### Transformation Semantics
+- `TransformationType` enum: `PASSTHROUGH`, `DERIVE`, `JOIN`, `AGGREGATE`, `FILTER`, `LOOKUP`, `SORT`, `UNION`, `PIVOT`, `UNPIVOT`, `CONVERT`, `UNKNOWN`
+- Component type → transformation mapping: Derived Column → `DERIVE`, Lookup → `LOOKUP`, Merge Join → `JOIN`, Aggregate → `AGGREGATE`, Conditional Split → `FILTER`, etc.
+- Derived Column expressions tracked: `[Price] * [Qty]` → source column reference extraction
+
+#### Column-Level Impact Analysis
+- `column_impact(fqn)` method: returns upstream and downstream column edges transitively
+- BFS traversal for multi-hop lineage: A.X → B.X → C.X chains
+- CLI: `ssis2fabric lineage --column dbo.Sales.Amount` shows upstream/downstream edges
+
+#### Interactive D3.js Sankey Visualization
+- `to_sankey_data()` exports nodes and links for D3.js Sankey diagrams
+- Embedded in HTML migration report via `_render_column_lineage()`
+- Color-coded by transformation type and source table
+- Auto-sized canvas based on node count
+
+#### Cross-Package Column Tracing
+- Execute Package parameter bindings traced as column lineage edges
+- Parent variable expressions mapped to child parameter names
+- Enables multi-package column flow tracking
+
+#### Export Formats
+- `column_lineage.json` output alongside existing `lineage.json`
+- Summary statistics: total edges, total columns, transformation type counts
+- Mermaid flowchart export for column lineage
+- Sankey data embedded in `migration_report.json` for HTML report
+
+#### Infrastructure
+- 32 new tests (1101 total)
 
 ---
 
