@@ -550,5 +550,78 @@ def extract_ssisdb(
         extractor.close()
 
 
+@main.command()
+@click.argument("output_dir", type=click.Path(exists=True))
+@click.pass_context
+def report(ctx: click.Context, output_dir: str) -> None:
+    """Generate an HTML migration report dashboard from migration_report.json.
+
+    Reads ``migration_report.json`` from OUTPUT_DIR and writes
+    ``migration_report.html`` in the same directory.
+    """
+    from ssis_to_fabric.engine.report_generator import ReportGenerator
+
+    gen = ReportGenerator()
+    try:
+        html_path = gen.generate(Path(output_dir))
+        console.print(f"[green]HTML report generated:[/green] {html_path}")
+    except FileNotFoundError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        sys.exit(1)
+
+
+@main.command()
+@click.argument("path", type=click.Path(exists=True))
+@click.option(
+    "--table",
+    "-t",
+    default=None,
+    help="Show impact analysis for a specific table (e.g. dbo.FactSales)",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(),
+    default=None,
+    help="Write lineage.json to OUTPUT directory (default: print to console)",
+)
+@click.pass_context
+def lineage(
+    ctx: click.Context,
+    path: str,
+    table: str | None,
+    output: str | None,
+) -> None:
+    """Analyse data lineage across SSIS packages.
+
+    Builds a directed graph of table dependencies and optionally performs
+    impact analysis for a specific table.
+
+    PATH may be a single ``.dtsx`` file or a directory containing packages.
+    """
+    from ssis_to_fabric.engine.lineage import LineageGraph
+
+    parser = DTSXParser()
+    p = Path(path)
+    packages = [parser.parse(p)] if p.is_file() else parser.parse_directory(p)
+
+    graph = LineageGraph()
+    graph.build(packages)
+
+    if table:
+        impact = graph.impact(table)
+        console.print(f"\n[bold]Impact analysis for table:[/bold] {table}")
+        console.print(f"  Readers: {', '.join(impact['readers']) or '(none)'}")
+        console.print(f"  Writers: {', '.join(impact['writers']) or '(none)'}")
+    else:
+        console.print(f"\n[bold]Lineage graph:[/bold] {len(graph.all_tables())} tables across {len(packages)} packages")
+        console.print("\n[bold]Mermaid diagram:[/bold]")
+        console.print(graph.to_mermaid())
+
+    if output:
+        json_path = graph.write_json(Path(output))
+        console.print(f"\n[green]Lineage JSON written:[/green] {json_path}")
+
+
 if __name__ == "__main__":
     main()

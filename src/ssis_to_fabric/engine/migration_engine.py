@@ -8,11 +8,12 @@ produces a migration plan, and executes the conversion.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 from ssis_to_fabric.analyzer.models import (
     ControlFlowTask,
@@ -27,10 +28,11 @@ from ssis_to_fabric.engine.dataflow_generator import DataflowGen2Generator
 from ssis_to_fabric.engine.spark_generator import SparkNotebookGenerator
 from ssis_to_fabric.logging_config import get_logger
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 logger = get_logger(__name__)
+
+# Directory and filename for persisted migration state
+_STATE_DIR = ".ssis2fabric"
+_STATE_FILE = "state.json"
 
 
 class TargetArtifact(str, Enum):
@@ -40,6 +42,16 @@ class TargetArtifact(str, Enum):
     DATAFLOW_GEN2 = "dataflow_gen2"
     SPARK_NOTEBOOK = "spark_notebook"
     MANUAL_REVIEW = "manual_review"
+
+
+@dataclass
+class MigrationError:
+    """Structured error/warning entry for the migration report."""
+
+    source: str  # file path or task name
+    severity: str  # "error", "warning", or "info"
+    message: str
+    suggested_fix: str = ""
 
 
 @dataclass
@@ -65,6 +77,13 @@ class MigrationPlan:
     strategy: str = ""
     items: list[MigrationItem] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
+    errors: list[MigrationError] = field(default_factory=list)
+
+    def add_error(self, source: str, severity: str, message: str, suggested_fix: str = "") -> None:
+        """Append a structured error/warning to the plan."""
+        self.errors.append(
+            MigrationError(source=source, severity=severity, message=message, suggested_fix=suggested_fix)
+        )
 
     def to_dict(self) -> dict:
         items_list = []
@@ -81,13 +100,55 @@ class MigrationPlan:
                     "notes": item.notes,
                 }
             )
+        errors_list = [
+            {
+                "source": e.source,
+                "severity": e.severity,
+                "message": e.message,
+                "suggested_fix": e.suggested_fix,
+            }
+            for e in self.errors
+        ]
         return {
             "project_name": self.project_name,
             "created_at": self.created_at,
             "strategy": self.strategy,
             "items": items_list,
             "summary": self.summary,
+            "errors": errors_list,
         }
+
+
+# ---------------------------------------------------------------------------
+# Incremental migration helpers
+# ---------------------------------------------------------------------------
+
+
+def _file_sha256(path: Path) -> str:
+    """Compute the SHA-256 hash of a file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _load_migration_state(state_dir: Path) -> dict:
+    """Load the persisted migration state from ``.ssis2fabric/state.json``."""
+    state_file = state_dir / _STATE_FILE
+    if state_file.exists():
+        try:
+            return json.loads(state_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_migration_state(state_dir: Path, state: dict) -> None:
+    """Persist migration state to ``.ssis2fabric/state.json``."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_file = state_dir / _STATE_FILE
+    state_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
 class MigrationEngine:
@@ -120,6 +181,14 @@ class MigrationEngine:
 
         for package in packages:
             self._plan_package(package, plan)
+            # Propagate parser warnings as structured errors in the report
+            for warning in package.warnings:
+                plan.add_error(
+                    source=package.file_path or package.name,
+                    severity="warning",
+                    message=warning,
+                    suggested_fix="Review the .dtsx file for XML or structural issues.",
+                )
 
         # Compute summary
         plan.summary = self._compute_summary(plan)
@@ -134,7 +203,14 @@ class MigrationEngine:
         )
         return plan
 
-    def execute(self, packages: list[SSISPackage], plan: MigrationPlan | None = None) -> MigrationPlan:
+    def execute(
+        self,
+        packages: list[SSISPackage],
+        plan: MigrationPlan | None = None,
+        *,
+        incremental: bool = False,
+        state_dir: Path | None = None,
+    ) -> MigrationPlan:
         """
         Execute the migration: generate all Fabric artifacts.
 
@@ -148,6 +224,10 @@ class MigrationEngine:
         Args:
             packages: Parsed SSIS packages
             plan: Optional pre-computed plan. If None, creates one.
+            incremental: When ``True``, compare SHA-256 hashes of ``.dtsx``
+                files against persisted state and skip unchanged packages.
+            state_dir: Directory for ``state.json``; defaults to
+                ``.ssis2fabric/`` in the current working directory.
         Returns:
             Updated migration plan with execution status.
         """
@@ -156,6 +236,35 @@ class MigrationEngine:
 
         output_dir = self.config.output_dir
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        # ------------------------------------------------------------------
+        # Incremental change detection
+        # ------------------------------------------------------------------
+        _state_dir = state_dir or Path(_STATE_DIR)
+        prev_state = _load_migration_state(_state_dir) if incremental else {}
+        current_hashes: dict[str, str] = {}
+
+        changed_packages: set[str] = set()
+        for pkg in packages:
+            if pkg.file_path:
+                try:
+                    sha = _file_sha256(Path(pkg.file_path))
+                except OSError:
+                    sha = ""
+                current_hashes[pkg.name] = sha
+                if not incremental or prev_state.get(pkg.name, {}).get("hash") != sha:
+                    changed_packages.add(pkg.name)
+            else:
+                changed_packages.add(pkg.name)
+
+        if incremental:
+            skipped = [p.name for p in packages if p.name not in changed_packages]
+            if skipped:
+                logger.info("incremental_skip", skipped=skipped)
+                for item in plan.items:
+                    if item.source_package not in changed_packages:
+                        item.status = "skipped"
+                        item.notes.append("Skipped (incremental — no changes detected)")
 
         # Clean previous output to prevent stale artifacts from prior runs
         import shutil
@@ -201,6 +310,12 @@ class MigrationEngine:
                 item.status = "error"
                 item.notes.append(f"Generation error: {str(e)}")
                 logger.error("generation_failed", task=item.source_task, error=str(e))
+                plan.add_error(
+                    source=f"{item.source_package}/{item.source_task}",
+                    severity="error",
+                    message=f"Generation error: {e}",
+                    suggested_fix="Check the SSIS component structure and generator logs.",
+                )
 
         # --- Phase 2: Generate consolidated pipelines (one per package) ---
         for package in packages:
@@ -225,9 +340,27 @@ class MigrationEngine:
                         item.status = "error"
                         item.notes.append(f"Pipeline generation error: {str(e)}")
                 logger.error("package_pipeline_failed", package=package.name, error=str(e))
+                plan.add_error(
+                    source=package.file_path or package.name,
+                    severity="error",
+                    message=f"Pipeline generation error: {e}",
+                    suggested_fix="Review the package structure and Data Factory generator logs.",
+                )
 
         # --- Phase 3: Generate connection manifests ---
         self._generate_connection_manifests(packages, output_dir)
+
+        # Persist updated state for incremental runs
+        if incremental or current_hashes:
+            new_state = dict(prev_state)
+            for pkg in packages:
+                if pkg.name in current_hashes:
+                    new_state[pkg.name] = {
+                        "hash": current_hashes[pkg.name],
+                        "migrated_at": datetime.now(tz=__import__("datetime").timezone.utc).isoformat(),
+                        "file_path": pkg.file_path,
+                    }
+            _save_migration_state(_state_dir, new_state)
 
         # Write migration report
         self._write_report(plan, output_dir)

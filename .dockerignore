@@ -1,0 +1,45 @@
+# Docker ignore file — keep the image lean
+
+# Python caches & build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Development / test files
+.tox/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+test-results/
+
+# Source control
+.git/
+.github/
+
+# Local config & secrets
+.env
+*.env
+migration_config.yaml
+.ssis2fabric/
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation
+docs/
+*.md

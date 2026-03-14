@@ -7,7 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.1.0] - 2026-02-27
+## [1.2.0] - 2026-03-14
+
+### ✨ Phase 1 — Hardening
+
+#### Expression Transpiler Parity
+- **Complete Power Query M parity** — `_ssis_expr_to_m()` is now fully recursive and handles nested SSIS expressions like `UPPER(TRIM(SUBSTRING(...)))`
+- **Date functions**: `DATEADD` → `Date.AddDays`/`Date.AddMonths`/`Date.AddYears`; `DATEDIFF` → `Duration.Days`/`Duration.TotalHours`/`Duration.TotalMinutes`/`Duration.TotalSeconds`; `DATEPART` → `Date.Year`/`Date.Month`/`Date.Day`/etc.; `YEAR`/`MONTH`/`DAY` direct mappings
+- **String functions**: `REPLACENULL` → `if … = null then … else …`; `LEFT` → `Text.Start`; `RIGHT` → `Text.End`; `FINDSTRING` → `Text.PositionOf`; `TOKEN` → `List.ItemAt(Text.Split(…))`; `REVERSE` → `Text.Reverse`; `LTRIM`/`RTRIM` → `Text.TrimStart`/`Text.TrimEnd`
+- **Math functions**: `ABS` → `Number.Abs`; `CEILING` → `Number.RoundUp`; `FLOOR` → `Number.RoundDown`; `ROUND` → `Number.Round`; `POWER` → `Number.Power`; `SQRT` → `Number.Sqrt`; `SIGN` → `Number.Sign`; `EXP`/`LOG`/`LOG10`
+- **Type casts**: `(DT_BOOL)` → `Logical.From`; `(DT_DECIMAL,s)` / `(DT_NUMERIC,p,s)` → `Decimal.From`; `(DT_CY)` → `Currency.From`; `(DT_GUID)` → `Text.From`; `(DT_BYTES,n)` → `Binary.From`; `(DT_I2)` → `Int32.From`; `(DT_I8)` → `Int64.From`; `(DT_R4)`/`(DT_R8)` → `Number.From`
+
+#### Graceful Error Handling
+- **Malformed `.dtsx` files** — `DTSXParser.parse()` now catches `XMLSyntaxError` and `OSError`, returning a partial `SSISPackage` with `status="partial"` and descriptive `warnings` instead of crashing
+- **`SSISPackage.status`** — new field (`"ok"` / `"partial"`) on the model
+- **`_parse_section_safe()`** — internal helper that wraps each parse sub-section so a corrupt connection manager or event handler does not abort the entire parse
+
+#### Deployment Retry
+- **Exponential backoff with jitter** for HTTP 429 (rate-limit) and 5xx (server error) responses in `FabricDeployer._api_call()`
+- **`RetryConfig`** — new Pydantic model in `config.py` exposed as `MigrationConfig.retry` with `max_retries`, `base_delay`, `max_delay`, `default_retry_after`
+- Added `math` and `random` imports to `fabric_deployer.py`
+
+#### Structured Error Reporting
+- **`MigrationError` dataclass** — `source`, `severity`, `message`, `suggested_fix` fields
+- **`MigrationPlan.errors`** — list of `MigrationError` populated from parser warnings, generation failures, and pipeline errors
+- **`migration_report.json`** — now contains an `"errors"` array alongside existing fields
+
+#### Tests
+- **78 new tests** (478 → 556) in `tests/unit/test_new_features.py` covering all Phase 1–3 features
+- Fixed failing `test_import_ssismigrator` by adding `src/ssis_to_fabric/__init__.py` that exports the public API surface
+
+### ✨ Phase 2 — Ecosystem & DX
+
+- **`LakehouseProvisioner`** (`engine/lakehouse_provisioner.py`) — reads `*.destinations.json` sidecar manifests and generates Spark Delta Lake or T-SQL `CREATE TABLE` DDL
+- **`ReportGenerator`** (`engine/report_generator.py`) — generates a self-contained HTML dashboard from `migration_report.json` with summary cards, complexity breakdown, item table, and errors section
+- **`ssis2fabric report <output_dir>`** CLI command
+- **`ssis2fabric lineage <path>`** CLI command — builds data lineage graph, supports `--table` for impact analysis, `--output` to write `lineage.json`
+- **PyPI release workflow** (`.github/workflows/release.yml`) — triggered on `v*` tags; builds with `python -m build` and publishes via `twine`
+- **Dockerfile** — multi-stage build (builder + runtime), `ssis2fabric` CLI as entrypoint
+- **`.dockerignore`** added
+- **`[project.urls]`** added to `pyproject.toml` for proper PyPI metadata
+
+### ✨ Phase 3 — Enterprise
+
+- **`LineageGraph`** (`engine/lineage.py`) — directed table-dependency graph across all packages; `build()`, `impact()`, `to_mermaid()`, `to_dict()`, `write_json()` methods
+- **`CSharpTranspiler`** (`engine/csharp_transpiler.py`) — converts simple C# Script Task code to Python equivalents; unsupported patterns emit `# TODO: Manual conversion required` comments
+- **Multi-workspace environment support** — `EnvironmentProfile` model and `MigrationConfig.environments` dict; `config.get_environment(env_name)` lookup
+- **Incremental/delta migration** — SHA-256 hashing of `.dtsx` files; state persisted in `.ssis2fabric/state.json`; `execute(incremental=True)` skips unchanged packages
+
+---
+
+
 
 ### ✨ Added
 

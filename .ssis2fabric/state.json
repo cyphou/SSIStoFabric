@@ -1,0 +1,7 @@
+{
+  "SampleETLPackage": {
+    "hash": "ec5c2910c90b58721e17402fd3785c47467a6ee6bb08fc5e0961b27ae2b093ce",
+    "migrated_at": "2026-03-14T05:26:22.505371+00:00",
+    "file_path": "/home/runner/work/SSIStoFabric/SSIStoFabric/tests/fixtures/sample_packages/simple_etl.dtsx"
+  }
+}

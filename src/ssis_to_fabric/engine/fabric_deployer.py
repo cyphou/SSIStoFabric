@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import json
+import random
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -30,10 +31,12 @@ logger = structlog.get_logger(__name__)
 FABRIC_API_BASE = "https://api.fabric.microsoft.com/v1"
 FABRIC_SCOPE = "https://api.fabric.microsoft.com/.default"
 
-# Rate-limit defaults
+# Rate-limit / retry defaults
 DEFAULT_RETRY_AFTER = 30
 MAX_RETRIES = 5
 POLL_INTERVAL = 5
+RETRY_BASE_DELAY = 2.0  # seconds — exponential backoff base
+RETRY_MAX_DELAY = 60.0  # seconds — cap for exponential backoff
 
 
 @dataclass
@@ -308,8 +311,7 @@ class FabricDeployer:
                         None,
                     )
                 if name not in result or (
-                    existing_conn_type == "PersonalCloud"
-                    and c.get("connectivityType") == "ShareableCloud"
+                    existing_conn_type == "PersonalCloud" and c.get("connectivityType") == "ShareableCloud"
                 ):
                     result[name] = c["id"]
 
@@ -324,9 +326,7 @@ class FabricDeployer:
             logger.warning("connection_discovery_failed", error=str(e))
             return {}
 
-    def _create_sql_connection(
-        self, display_name: str, server: str, database: str
-    ) -> str | None:
+    def _create_sql_connection(self, display_name: str, server: str, database: str) -> str | None:
         """Create a SQL-type ShareableCloud connection with WorkspaceIdentity.
 
         This creates a Fabric connection that uses WorkspaceIdentity
@@ -404,22 +404,57 @@ class FabricDeployer:
         json_body: dict | None = None,
         retries: int = MAX_RETRIES,
     ) -> requests.Response:
-        """Make an API call with retry-after handling for 429s."""
+        """Make an API call with exponential backoff for 429 and 5xx errors.
+
+        Retry strategy:
+        - HTTP 429 (Too Many Requests): honour the ``Retry-After`` header, then
+          apply exponential back-off with full jitter.
+        - HTTP 5xx (server errors): apply exponential back-off with full jitter.
+        - Other status codes are returned immediately.
+
+        Base delay is ``RETRY_BASE_DELAY`` seconds, capped at ``RETRY_MAX_DELAY``.
+        """
+        resp: requests.Response | None = None
         for attempt in range(1, retries + 1):
             resp = requests.request(method, url, headers=self._headers(), json=json_body, timeout=120)
+
             if resp.status_code == 429:
                 retry_after = int(resp.headers.get("Retry-After", DEFAULT_RETRY_AFTER))
+                # Full-jitter backoff on top of Retry-After
+                backoff = min(RETRY_MAX_DELAY, RETRY_BASE_DELAY * (2 ** (attempt - 1)))
+                delay = retry_after + random.uniform(0, backoff)
                 logger.warning(
                     "rate_limited",
                     retry_after=retry_after,
+                    backoff=round(delay, 2),
                     attempt=attempt,
+                    max_retries=retries,
                     url=url,
                 )
-                time.sleep(retry_after)
+                if attempt < retries:
+                    time.sleep(delay)
                 continue
+
+            if resp.status_code >= 500:
+                backoff = min(RETRY_MAX_DELAY, RETRY_BASE_DELAY * (2 ** (attempt - 1)))
+                delay = random.uniform(0, backoff)
+                logger.warning(
+                    "server_error_retry",
+                    status=resp.status_code,
+                    backoff=round(delay, 2),
+                    attempt=attempt,
+                    max_retries=retries,
+                    url=url,
+                )
+                if attempt < retries:
+                    time.sleep(delay)
+                continue
+
             return resp
-        # Return last response even if still 429
-        return resp  # type: ignore[possibly-undefined]
+
+        # All retries exhausted — return last response
+        assert resp is not None  # always set after at least 1 iteration
+        return resp
 
     def _wait_for_operation(self, operation_url: str, operation_id: str) -> tuple[bool, str]:
         """Poll a long-running operation until it completes.
@@ -615,9 +650,7 @@ class FabricDeployer:
             if folder_id:
                 self._folder_map[name] = folder_id
 
-        self._folder_names_sorted = sorted(
-            self._folder_map.keys(), key=len, reverse=True
-        )
+        self._folder_names_sorted = sorted(self._folder_map.keys(), key=len, reverse=True)
         logger.info("phase05_folders_ready", count=len(self._folder_map))
 
     def _folder_for_item(self, display_name: str) -> str | None:
@@ -986,8 +1019,8 @@ class FabricDeployer:
                         log.info(
                             "injected_script_connection",
                             activity=act.get("name"),
-                        connection_id=self.default_connection_id,
-                    )
+                            connection_id=self.default_connection_id,
+                        )
 
         # Auto-add missing pipeline parameters.  ExecutePipeline activities
         # may reference parameters (e.g. @pipeline().parameters.LoadExecutionId)
@@ -1447,10 +1480,7 @@ class FabricDeployer:
     def _has_script_activity(pipeline_json: dict) -> bool:
         """Check if a pipeline contains Script or SqlServerStoredProcedure activities."""
         sql_types = {"Script", "SqlServerStoredProcedure"}
-        return any(
-            act.get("type") in sql_types
-            for act in pipeline_json.get("properties", {}).get("activities", [])
-        )
+        return any(act.get("type") in sql_types for act in pipeline_json.get("properties", {}).get("activities", []))
 
     @staticmethod
     def _has_cross_references(pipeline_json: dict) -> bool:
