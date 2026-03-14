@@ -49,4 +49,5 @@ Thumbs.db
 
 # Debug / scratch files — anything prefixed with _
 _*.py
+!__init__.py
 _*.txt
