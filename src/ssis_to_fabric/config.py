@@ -92,6 +92,27 @@ class RegressionConfig(BaseModel):
     sample_size: int = Field(default=10000, description="Max rows to compare per table")
 
 
+class EnvironmentProfile(BaseModel):
+    """Per-environment deployment configuration (dev / staging / prod).
+
+    Example YAML::
+
+        environments:
+          dev:
+            workspace_id: "aaaa-bbbb-cccc-dddd"
+            connection_mappings:
+              OLEDB_Source: "conn-id-for-dev"
+          prod:
+            workspace_id: "1111-2222-3333-4444"
+            connection_mappings:
+              OLEDB_Source: "conn-id-for-prod"
+    """
+
+    workspace_id: str = Field(default="")
+    workspace_name: str = Field(default="")
+    connection_mappings: dict[str, str] = Field(default_factory=dict)
+
+
 class ConnectionMappingConfig(BaseModel):
     """Maps SSIS connection manager names to Fabric connection IDs.
 
@@ -106,6 +127,15 @@ class ConnectionMappingConfig(BaseModel):
         default_factory=dict,
         description="SSIS connection name → Fabric connection ID / reference name",
     )
+
+
+class RetryConfig(BaseModel):
+    """Configurable retry settings for Fabric REST API calls."""
+
+    max_retries: int = Field(default=5, description="Maximum number of retry attempts")
+    base_delay: float = Field(default=2.0, description="Base delay in seconds for exponential backoff")
+    max_delay: float = Field(default=60.0, description="Maximum delay cap in seconds")
+    default_retry_after: int = Field(default=30, description="Fallback Retry-After value in seconds")
 
 
 class MigrationConfig(BaseModel):
@@ -130,6 +160,22 @@ class MigrationConfig(BaseModel):
     data_factory: DataFactoryConfig = Field(default_factory=DataFactoryConfig)
     regression: RegressionConfig = Field(default_factory=RegressionConfig)
     connection_mappings: ConnectionMappingConfig = Field(default_factory=ConnectionMappingConfig)
+    retry: RetryConfig = Field(default_factory=RetryConfig)
+    # Named environment profiles (dev / staging / prod) for multi-workspace support
+    environments: dict[str, EnvironmentProfile] = Field(
+        default_factory=dict,
+        description="Named environment profiles for multi-workspace deployments",
+    )
+
+    def get_environment(self, env_name: str) -> EnvironmentProfile:
+        """Return the profile for *env_name*, or a default profile if not configured."""
+        if env_name in self.environments:
+            return self.environments[env_name]
+        # Fall back to the root fabric config as a single environment
+        return EnvironmentProfile(
+            workspace_id=self.fabric.workspace_id,
+            workspace_name=self.fabric.workspace_name,
+        )
 
     @classmethod
     def from_yaml(cls, path: Path) -> MigrationConfig:

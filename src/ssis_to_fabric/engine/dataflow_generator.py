@@ -651,23 +651,64 @@ class DataflowGen2Generator:
         return params
 
     @staticmethod
-    def _ssis_expr_to_m(expr: str) -> str:
-        """Convert a simple SSIS expression to Power Query M.
+    def _ssis_expr_to_m(expr: str) -> str:  # noqa: C901 (intentionally complex)
+        """Convert an SSIS expression to Power Query M (recursive, full parity).
 
-        Handles common patterns; complex expressions need manual review.
+        Supports date, string, math functions, type casts, nested expressions
+        and SSIS variable references.  Complex patterns emit a ``/* TODO */``
+        comment so reviewers can handle them manually.
         """
         import re as _re
 
         if not expr or expr == "null":
             return "null"
 
-        result = expr.strip()
+        expr = expr.strip()
 
-        # ---- SSIS variable / parameter references ----
-        # @[$Package::VarName] → VarName  (PQ parameter)
-        # @[User::VarName]     → VarName
-        # @[$Project::VarName] → VarName
-        # @[System::VarName]   → mapped value or VarName
+        # ------------------------------------------------------------------
+        # Internal helpers
+        # ------------------------------------------------------------------
+
+        def _find_close_paren(s: str, open_pos: int) -> int:
+            """Return the index of the closing ')' that balances s[open_pos]='('."""
+            depth = 0
+            for i in range(open_pos, len(s)):
+                if s[i] == "(":
+                    depth += 1
+                elif s[i] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        return i
+            return -1
+
+        def _split_args(s: str) -> list[str]:
+            """Split a comma-separated arg string, respecting nested parens/brackets."""
+            args: list[str] = []
+            depth = 0
+            current: list[str] = []
+            for ch in s:
+                if ch in ("(", "["):
+                    depth += 1
+                    current.append(ch)
+                elif ch in (")", "]"):
+                    depth -= 1
+                    current.append(ch)
+                elif ch == "," and depth == 0:
+                    args.append("".join(current).strip())
+                    current = []
+                else:
+                    current.append(ch)
+            if current:
+                args.append("".join(current).strip())
+            return [a for a in args if a]
+
+        def _conv(s: str) -> str:
+            """Shorthand recursive call."""
+            return DataflowGen2Generator._ssis_expr_to_m(s)
+
+        # ------------------------------------------------------------------
+        # 1. SSIS variable / parameter references
+        # ------------------------------------------------------------------
         _system_var_map = {
             "StartTime": "DateTime.LocalNow()",
             "PackageName": '"PackageName"  /* TODO: replace with actual value */',
@@ -675,10 +716,10 @@ class DataflowGen2Generator:
             "UserName": '"UserName"  /* TODO: replace with actual value */',
             "ExecutionInstanceGUID": '"00000000-0000-0000-0000-000000000000"  /* TODO */',
         }
-        # Full match: the entire expression is a single variable reference
+
         var_match = _re.match(
             r"^@\[\s*\$?(Package|User|Project|System)\s*::\s*(\w+)\s*\]$",
-            result,
+            expr,
             _re.IGNORECASE,
         )
         if var_match:
@@ -687,52 +728,213 @@ class DataflowGen2Generator:
                 return _system_var_map[var_name]
             return var_name
 
-        # Inline variable references within a larger expression
-        def _replace_var(m: _re.Match) -> str:
+        def _replace_var(m: _re.Match) -> str:  # type: ignore[type-arg]
             ns, vn = m.group(1), m.group(2)
             if ns.lower() == "system" and vn in _system_var_map:
                 return _system_var_map[vn]
             return vn
 
-        result = _re.sub(
+        expr = _re.sub(
             r"@\[\s*\$?(Package|User|Project|System)\s*::\s*(\w+)\s*\]",
             _replace_var,
-            result,
+            expr,
             flags=_re.IGNORECASE,
         )
 
-        # GETDATE() → DateTime.LocalNow()
-        result = _re.sub(r"\bGETDATE\s*\(\s*\)", "DateTime.LocalNow()", result, flags=_re.IGNORECASE)
-        # UPPER(col) → Text.Upper([col])
-        result = _re.sub(r"\bUPPER\s*\(\s*(\w+)\s*\)", r"Text.Upper([\1])", result, flags=_re.IGNORECASE)
-        # LOWER(col) → Text.Lower([col])
-        result = _re.sub(r"\bLOWER\s*\(\s*(\w+)\s*\)", r"Text.Lower([\1])", result, flags=_re.IGNORECASE)
-        # TRIM(col) → Text.Trim([col])
-        result = _re.sub(r"\bTRIM\s*\(\s*(\w+)\s*\)", r"Text.Trim([\1])", result, flags=_re.IGNORECASE)
-        # LEN(col) → Text.Length([col])
-        result = _re.sub(r"\bLEN\s*\(\s*(\w+)\s*\)", r"Text.Length([\1])", result, flags=_re.IGNORECASE)
-        # REPLACE(col, "a", "b") → Text.Replace([col], "a", "b")
-        result = _re.sub(r"\bREPLACE\s*\(\s*(\w+)\s*,", r"Text.Replace([\1],", result, flags=_re.IGNORECASE)
-        # SUBSTRING(col, start, len) → Text.Middle([col], start-1, len) -- M is 0-based
-        m_sub = _re.match(r"^SUBSTRING\s*\(\s*(\w+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$", result, _re.IGNORECASE)
-        if m_sub:
-            start = int(m_sub.group(2)) - 1  # SSIS is 1-based, M is 0-based
-            return f"Text.Middle([{m_sub.group(1)}], {start}, {m_sub.group(3)})"
-        # ISNULL(col) → [col] = null
-        result = _re.sub(r"\bISNULL\s*\(\s*(\w+)\s*\)", r"[\1] = null", result, flags=_re.IGNORECASE)
-        # (DT_STR,...) col → Text.From([col])
-        result = _re.sub(r"\(DT_STR\s*,\s*\d+\s*,\s*\d+\s*\)\s*(\w+)", r"Text.From([\1])", result, flags=_re.IGNORECASE)
-        # (DT_WSTR,...) col → Text.From([col])
-        result = _re.sub(r"\(DT_WSTR\s*,\s*\d+\s*\)\s*(\w+)", r"Text.From([\1])", result, flags=_re.IGNORECASE)
-        # (DT_I4) col → Int64.From([col])
-        result = _re.sub(r"\(DT_I4\)\s*(\w+)", r"Int64.From([\1])", result, flags=_re.IGNORECASE)
+        # ------------------------------------------------------------------
+        # 2. Type casts (DT_*) — only simple "cast operand" patterns
+        # ------------------------------------------------------------------
+        expr = _re.sub(r"\(DT_STR\s*,\s*\d+\s*,\s*\d+\s*\)\s*(\w+)", r"Text.From([\1])", expr, flags=_re.IGNORECASE)
+        expr = _re.sub(r"\(DT_WSTR\s*,\s*\d+\s*\)\s*(\w+)", r"Text.From([\1])", expr, flags=_re.IGNORECASE)
+        expr = _re.sub(r"\(DT_I4\)\s*(\w+)", r"Int64.From([\1])", expr, flags=_re.IGNORECASE)
+        expr = _re.sub(r"\(DT_I2\)\s*(\w+)", r"Int32.From([\1])", expr, flags=_re.IGNORECASE)
+        expr = _re.sub(r"\(DT_I8\)\s*(\w+)", r"Int64.From([\1])", expr, flags=_re.IGNORECASE)
+        expr = _re.sub(r"\(DT_R4\)\s*(\w+)", r"Number.From([\1])", expr, flags=_re.IGNORECASE)
+        expr = _re.sub(r"\(DT_R8\)\s*(\w+)", r"Number.From([\1])", expr, flags=_re.IGNORECASE)
+        expr = _re.sub(r"\(DT_BOOL\)\s*(\w+)", r"Logical.From([\1])", expr, flags=_re.IGNORECASE)
+        _pat_dec = r"\(DT_DECIMAL\s*,\s*\d+\s*\)\s*(\w+)"
+        expr = _re.sub(_pat_dec, r"Decimal.From([\1])", expr, flags=_re.IGNORECASE)
+        _pat_num = r"\(DT_NUMERIC\s*,\s*\d+\s*,\s*\d+\s*\)\s*(\w+)"
+        expr = _re.sub(_pat_num, r"Decimal.From([\1])", expr, flags=_re.IGNORECASE)
+        expr = _re.sub(r"\(DT_CY\)\s*(\w+)", r"Currency.From([\1])", expr, flags=_re.IGNORECASE)
+        expr = _re.sub(r"\(DT_GUID\)\s*(\w+)", r"Text.From([\1])", expr, flags=_re.IGNORECASE)
+        expr = _re.sub(r"\(DT_BYTES\s*,\s*\d+\s*\)\s*(\w+)", r"Binary.From([\1])", expr, flags=_re.IGNORECASE)
+
+        # ------------------------------------------------------------------
+        # 3. Top-level function call — dispatch & recurse into arguments
+        # ------------------------------------------------------------------
+        func_match = _re.match(r"^([A-Z_][A-Z0-9_]*)\s*\(", expr, _re.IGNORECASE)
+        if func_match:
+            func_name = func_match.group(1).upper()
+            open_idx = expr.index("(", func_match.start())
+            close_idx = _find_close_paren(expr, open_idx)
+            if close_idx >= 0:
+                args_raw = expr[open_idx + 1 : close_idx]
+                args = _split_args(args_raw)
+                tail = expr[close_idx + 1 :].strip()
+
+                # ---- String functions ----
+                if func_name == "UPPER" and len(args) == 1:
+                    return f"Text.Upper({_conv(args[0])}){tail}"
+                if func_name == "LOWER" and len(args) == 1:
+                    return f"Text.Lower({_conv(args[0])}){tail}"
+                if func_name == "TRIM" and len(args) == 1:
+                    return f"Text.Trim({_conv(args[0])}){tail}"
+                if func_name == "LTRIM" and len(args) == 1:
+                    return f"Text.TrimStart({_conv(args[0])}){tail}"
+                if func_name == "RTRIM" and len(args) == 1:
+                    return f"Text.TrimEnd({_conv(args[0])}){tail}"
+                if func_name == "LEN" and len(args) == 1:
+                    return f"Text.Length({_conv(args[0])}){tail}"
+                if func_name == "REVERSE" and len(args) == 1:
+                    return f"Text.Reverse({_conv(args[0])}){tail}"
+                if func_name == "REPLACE" and len(args) == 3:
+                    return f"Text.Replace({_conv(args[0])}, {_conv(args[1])}, {_conv(args[2])}){tail}"
+                if func_name == "SUBSTRING" and len(args) == 3:
+                    start_arg = args[1].strip()
+                    start_m = str(int(start_arg) - 1) if start_arg.isdigit() else f"({_conv(start_arg)} - 1)"
+                    return f"Text.Middle({_conv(args[0])}, {start_m}, {_conv(args[2])}){tail}"
+                if func_name == "LEFT" and len(args) == 2:
+                    return f"Text.Start({_conv(args[0])}, {_conv(args[1])}){tail}"
+                if func_name == "RIGHT" and len(args) == 2:
+                    return f"Text.End({_conv(args[0])}, {_conv(args[1])}){tail}"
+                if func_name == "FINDSTRING" and len(args) >= 2:
+                    occ = f"  /* occurrence={_conv(args[2])} */" if len(args) >= 3 else ""
+                    return f"Text.PositionOf({_conv(args[0])}, {_conv(args[1])}){occ}{tail}"
+                if func_name == "TOKEN" and len(args) >= 2:
+                    occ = _conv(args[2]) if len(args) >= 3 else "1"
+                    return f"List.ItemAt(Text.Split({_conv(args[0])}, {_conv(args[1])}), {occ} - 1){tail}"
+                if func_name == "REPLACENULL" and len(args) == 2:
+                    col = _conv(args[0])
+                    val = _conv(args[1])
+                    return f"(if {col} = null then {val} else {col}){tail}"
+                if func_name == "ISNULL" and len(args) == 1:
+                    return f"({_conv(args[0])} = null){tail}"
+                if func_name == "GETDATE" and len(args) == 0:
+                    return f"DateTime.LocalNow(){tail}"
+
+                # ---- Date functions ----
+                if func_name == "DATEADD" and len(args) == 3:
+                    part = args[0].strip().strip('"').strip("'").upper()
+                    _dateadd_map = {
+                        "YEAR": "Date.AddYears",
+                        "YY": "Date.AddYears",
+                        "YYYY": "Date.AddYears",
+                        "MONTH": "Date.AddMonths",
+                        "MM": "Date.AddMonths",
+                        "DAY": "Date.AddDays",
+                        "DD": "Date.AddDays",
+                        "D": "Date.AddDays",
+                        "WEEK": "Date.AddWeeks",
+                        "WK": "Date.AddWeeks",
+                        "WW": "Date.AddWeeks",
+                    }
+                    m_func = _dateadd_map.get(part)
+                    if m_func:
+                        return f"{m_func}({_conv(args[1])}, {_conv(args[2])}){tail}"
+                    return f"/* TODO: DATEADD({part}, ...) */ {_conv(args[1])}{tail}"
+
+                if func_name == "DATEDIFF" and len(args) == 3:
+                    part = args[0].strip().strip('"').strip("'").upper()
+                    a, b = _conv(args[1]), _conv(args[2])
+                    _datediff_map = {
+                        "DAY": "Duration.Days",
+                        "DD": "Duration.Days",
+                        "D": "Duration.Days",
+                        "HOUR": "Duration.TotalHours",
+                        "HH": "Duration.TotalHours",
+                        "MINUTE": "Duration.TotalMinutes",
+                        "MI": "Duration.TotalMinutes",
+                        "N": "Duration.TotalMinutes",
+                        "SECOND": "Duration.TotalSeconds",
+                        "SS": "Duration.TotalSeconds",
+                        "S": "Duration.TotalSeconds",
+                    }
+                    diff_func = _datediff_map.get(part, "Duration.Days")
+                    prefix = "" if part in _datediff_map else f"/* TODO: DATEDIFF({part}, ...) */ "
+                    return f"{prefix}{diff_func}({b} - {a}){tail}"
+
+                if func_name == "DATEPART" and len(args) == 2:
+                    part = args[0].strip().strip('"').strip("'").upper()
+                    _datepart_map = {
+                        "YEAR": "Date.Year",
+                        "YY": "Date.Year",
+                        "YYYY": "Date.Year",
+                        "MONTH": "Date.Month",
+                        "MM": "Date.Month",
+                        "DAY": "Date.Day",
+                        "DD": "Date.Day",
+                        "D": "Date.Day",
+                        "HOUR": "Time.Hour",
+                        "HH": "Time.Hour",
+                        "MINUTE": "Time.Minute",
+                        "MI": "Time.Minute",
+                        "N": "Time.Minute",
+                        "SECOND": "Time.Second",
+                        "SS": "Time.Second",
+                        "S": "Time.Second",
+                        "DAYOFWEEK": "Date.DayOfWeek",
+                        "DW": "Date.DayOfWeek",
+                        "WEEK": "Date.WeekOfYear",
+                        "WK": "Date.WeekOfYear",
+                        "WW": "Date.WeekOfYear",
+                    }
+                    dp_func = _datepart_map.get(part)
+                    if dp_func:
+                        return f"{dp_func}({_conv(args[1])}){tail}"
+                    return f"/* TODO: DATEPART({part}, ...) */ Date.Year({_conv(args[1])}){tail}"
+
+                if func_name == "YEAR" and len(args) == 1:
+                    return f"Date.Year({_conv(args[0])}){tail}"
+                if func_name == "MONTH" and len(args) == 1:
+                    return f"Date.Month({_conv(args[0])}){tail}"
+                if func_name == "DAY" and len(args) == 1:
+                    return f"Date.Day({_conv(args[0])}){tail}"
+
+                # ---- Math functions ----
+                if func_name == "ABS" and len(args) == 1:
+                    return f"Number.Abs({_conv(args[0])}){tail}"
+                if func_name == "CEILING" and len(args) == 1:
+                    return f"Number.RoundUp({_conv(args[0])}){tail}"
+                if func_name == "FLOOR" and len(args) == 1:
+                    return f"Number.RoundDown({_conv(args[0])}){tail}"
+                if func_name == "ROUND":
+                    if len(args) == 2:
+                        return f"Number.Round({_conv(args[0])}, {_conv(args[1])}){tail}"
+                    if len(args) == 1:
+                        return f"Number.Round({_conv(args[0])}){tail}"
+                if func_name == "POWER" and len(args) == 2:
+                    return f"Number.Power({_conv(args[0])}, {_conv(args[1])}){tail}"
+                if func_name == "SQRT" and len(args) == 1:
+                    return f"Number.Sqrt({_conv(args[0])}){tail}"
+                if func_name == "SIGN" and len(args) == 1:
+                    return f"Number.Sign({_conv(args[0])}){tail}"
+                if func_name == "EXP" and len(args) == 1:
+                    return f"Number.Power(Number.E, {_conv(args[0])}){tail}"
+                if func_name == "LOG" and len(args) == 1:
+                    return f"Number.Log({_conv(args[0])}){tail}"
+                if func_name == "LOG10" and len(args) == 1:
+                    return f"Number.Log10({_conv(args[0])}){tail}"
+
+        # ------------------------------------------------------------------
+        # 4. Miscellaneous non-function patterns
+        # ------------------------------------------------------------------
+        # GETDATE() anywhere in expression
+        expr = _re.sub(r"\bGETDATE\s*\(\s*\)", "DateTime.LocalNow()", expr, flags=_re.IGNORECASE)
+        # ISNULL(simple_col)
+        expr = _re.sub(r"\bISNULL\s*\(\s*(\w+)\s*\)", r"[\1] = null", expr, flags=_re.IGNORECASE)
+        # YEAR/MONTH/DAY(simple_col)
+        expr = _re.sub(r"\bYEAR\s*\(\s*(\w+)\s*\)", r"Date.Year([\1])", expr, flags=_re.IGNORECASE)
+        expr = _re.sub(r"\bMONTH\s*\(\s*(\w+)\s*\)", r"Date.Month([\1])", expr, flags=_re.IGNORECASE)
+        expr = _re.sub(r"\bDAY\s*\(\s*(\w+)\s*\)", r"Date.Day([\1])", expr, flags=_re.IGNORECASE)
         # Concatenation: + → &
-        result = result.replace(" + ", " & ")
+        expr = expr.replace(" + ", " & ")
         # Ternary: cond ? a : b → if cond then a else b
-        ternary = _re.match(r"^(.+?)\s*\?\s*(.+?)\s*:\s*(.+)$", result)
+        ternary = _re.match(r"^(.+?)\s*\?\s*(.+?)\s*:\s*(.+)$", expr)
         if ternary:
             return f"if {ternary.group(1)} then {ternary.group(2)} else {ternary.group(3)}"
-        return result
+
+        return expr
 
     @staticmethod
     def _ssis_type_to_m_type(ssis_type: str) -> str:

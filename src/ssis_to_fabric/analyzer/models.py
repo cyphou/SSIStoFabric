@@ -275,6 +275,8 @@ class SSISPackage(BaseModel):
     total_data_flows: int = 0
     overall_complexity: MigrationComplexity = MigrationComplexity.LOW
     warnings: list[str] = Field(default_factory=list)
+    # "ok" for fully parsed packages; "partial" when errors were recovered from
+    status: str = "ok"
 
     def compute_stats(self) -> None:
         """Recompute package statistics after parsing."""

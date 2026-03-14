@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ssis-to-fabric"
-version = "1.1.0"
+version = "1.2.0"
 description = "Production-ready migration tool: SSIS packages to Microsoft Fabric (Data Factory pipelines & Spark notebooks)"
 readme = "README.md"
 license = {text = "MIT"}
@@ -35,6 +35,12 @@ dependencies = [
     "deepdiff>=6.7",
     "structlog>=23.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/cyphou/SSIStoFabric"
+Repository = "https://github.com/cyphou/SSIStoFabric"
+"Bug Tracker" = "https://github.com/cyphou/SSIStoFabric/issues"
+Changelog = "https://github.com/cyphou/SSIStoFabric/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [

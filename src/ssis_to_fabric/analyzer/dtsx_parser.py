@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import contextlib
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from lxml import etree
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from ssis_to_fabric.analyzer.models import (
     Column,
@@ -170,11 +174,36 @@ class DTSXParser:
     """
 
     def parse(self, file_path: str | Path) -> SSISPackage:
-        """Parse a .dtsx file and return an SSISPackage model."""
+        """Parse a .dtsx file and return an SSISPackage model.
+
+        On XML parse errors the method returns a partial ``SSISPackage`` with
+        ``status="partial"`` and the error details added to ``package.warnings``
+        rather than raising an exception.
+        """
         file_path = Path(file_path)
         logger.info("parsing_package", file=str(file_path))
 
-        tree = etree.parse(str(file_path))
+        try:
+            tree = etree.parse(str(file_path))
+        except etree.XMLSyntaxError as exc:
+            warn_msg = f"XML syntax error in {file_path.name}: {exc}"
+            logger.warning("parse_xml_syntax_error", file=str(file_path), error=str(exc))
+            return SSISPackage(
+                name=file_path.stem,
+                file_path=str(file_path),
+                warnings=[warn_msg],
+                status="partial",
+            )
+        except OSError as exc:
+            warn_msg = f"Cannot read {file_path.name}: {exc}"
+            logger.warning("parse_io_error", file=str(file_path), error=str(exc))
+            return SSISPackage(
+                name=file_path.stem,
+                file_path=str(file_path),
+                warnings=[warn_msg],
+                status="partial",
+            )
+
         root = tree.getroot()
 
         # Handle namespace
@@ -189,24 +218,45 @@ class DTSXParser:
             format_version=self._get_dts_attr(root, "FormatVersion", nsmap) or "",
         )
 
-        # Parse sections
-        package.connection_managers = self._parse_connection_managers(root, nsmap)
-        package.variables = self._parse_variables(root, nsmap)
-        package.parameters = self._parse_parameters(root, nsmap)
-        package.control_flow_tasks = self._parse_executables(root, nsmap)
-        package.precedence_constraints = self._parse_precedence_constraints(root, nsmap)
-        package.event_handlers = self._parse_event_handlers(root, nsmap)
+        # Parse sections — each sub-parser is wrapped to allow partial results
+        package.connection_managers = self._parse_section_safe(package, self._parse_connection_managers, root, nsmap)
+        package.variables = self._parse_section_safe(package, self._parse_variables, root, nsmap)
+        package.parameters = self._parse_section_safe(package, self._parse_parameters, root, nsmap)
+        package.control_flow_tasks = self._parse_section_safe(package, self._parse_executables, root, nsmap)
+        package.precedence_constraints = self._parse_section_safe(
+            package, self._parse_precedence_constraints, root, nsmap
+        )
+        package.event_handlers = self._parse_section_safe(package, self._parse_event_handlers, root, nsmap)
 
         package.compute_stats()
 
-        logger.info(
-            "package_parsed",
-            name=package.name,
-            tasks=package.total_tasks,
-            data_flows=package.total_data_flows,
-            complexity=package.overall_complexity.value,
-        )
+        if package.warnings:
+            logger.warning(
+                "package_parsed_with_warnings",
+                name=package.name,
+                warnings=package.warnings,
+            )
+        else:
+            logger.info(
+                "package_parsed",
+                name=package.name,
+                tasks=package.total_tasks,
+                data_flows=package.total_data_flows,
+                complexity=package.overall_complexity.value,
+            )
         return package
+
+    def _parse_section_safe(self, package: SSISPackage, fn: Callable[..., Any], *args: Any) -> list[Any]:
+        """Call a parse sub-method; on error record a warning and return []."""
+        try:
+            return fn(*args)  # type: ignore[no-any-return]
+        except Exception as exc:  # noqa: BLE001
+            warn_msg = f"Partial parse error in {Path(package.file_path).name} ({fn.__name__}): {exc}"
+            logger.warning("parse_section_error", section=fn.__name__, error=str(exc))
+            package.warnings.append(warn_msg)
+            if package.status != "partial":
+                package.status = "partial"
+            return []
 
     def parse_directory(self, dir_path: str | Path) -> list[SSISPackage]:
         """Parse all .dtsx files in a directory (recursively).
