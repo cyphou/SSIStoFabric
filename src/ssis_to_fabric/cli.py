@@ -550,5 +550,91 @@ def extract_ssisdb(
         extractor.close()
 
 
+@main.command()
+@click.argument("path", type=click.Path(exists=True))
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["mermaid", "d3"]),
+    default="mermaid",
+    help="Output format: Mermaid flowchart or D3.js JSON (default: mermaid)",
+)
+@click.option("--output", "-o", type=click.Path(), default=None, help="Write output to a file instead of stdout")
+@click.option(
+    "--impact",
+    default=None,
+    help="Run impact analysis: show all nodes downstream of the given node name",
+)
+@click.option(
+    "--upstream",
+    is_flag=True,
+    default=False,
+    help="When combined with --impact, show upstream nodes instead of downstream",
+)
+@click.pass_context
+def lineage(
+    ctx: click.Context,
+    path: str,
+    output_format: str,
+    output: str | None,
+    impact: str | None,
+    upstream: bool,
+) -> None:
+    """Build and export a data lineage graph from SSIS packages.
+
+    Parses SSIS packages and constructs a lineage graph showing how data
+    flows from sources through transformations to destinations.  The graph
+    can be exported as a Mermaid flowchart or D3.js-compatible JSON.
+
+    Use --impact to perform impact analysis: given a table or node name,
+    discover all downstream (or --upstream) dependencies.
+    """
+    from ssis_to_fabric.analyzer.lineage import LineageBuilder
+
+    parser = DTSXParser()
+    p = Path(path)
+    packages = [parser.parse(p)] if p.is_file() else parser.parse_directory(p)
+
+    if not packages:
+        console.print("[red]No SSIS packages found.[/red]")
+        sys.exit(1)
+
+    builder = LineageBuilder()
+    graph = builder.build(packages)
+
+    # Impact analysis mode
+    if impact:
+        node = graph.find_node(impact)
+        if not node:
+            console.print(f"[red]No node matching '{impact}' found in the lineage graph.[/red]")
+            sys.exit(1)
+
+        affected = graph.get_upstream(node.id) if upstream else graph.get_downstream(node.id)
+        direction = "Upstream" if upstream else "Downstream"
+
+        table = Table(title=f"{direction} Impact Analysis for '{node.name}'")
+        table.add_column("Node", style="cyan")
+        table.add_column("Type")
+        table.add_column("Package")
+
+        for n in affected:
+            table.add_row(n.name, n.node_type.value, n.package)
+
+        console.print(table)
+        console.print(f"\n[bold]{len(affected)}[/bold] {direction.lower()} node(s) affected.")
+        return
+
+    # Export mode
+    content = graph.to_d3_json() if output_format == "d3" else graph.to_mermaid()
+
+    if output:
+        Path(output).write_text(content, encoding="utf-8")
+        console.print(f"[green]Lineage graph written to {output}[/green]")
+    else:
+        console.print(content)
+
+    console.print(f"\n[bold]Graph:[/bold] {len(graph.nodes)} nodes, {len(graph.edges)} edges")
+
+
 if __name__ == "__main__":
     main()

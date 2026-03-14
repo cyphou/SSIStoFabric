@@ -31,6 +31,7 @@ from ssis_to_fabric.engine.migration_engine import MigrationEngine, MigrationPla
 from ssis_to_fabric.logging_config import setup_logging
 
 if TYPE_CHECKING:
+    from ssis_to_fabric.analyzer.lineage import LineageGraph
     from ssis_to_fabric.analyzer.models import SSISPackage
     from ssis_to_fabric.engine.fabric_deployer import DeploymentReport
 
@@ -171,6 +172,34 @@ class SSISMigrator:
             raise ValueError(f"No SSIS packages found at: {p}")
 
         return packages
+
+    # ------------------------------------------------------------------
+    # 1b. Lineage
+    # ------------------------------------------------------------------
+
+    def lineage(self, packages: list[SSISPackage]) -> LineageGraph:
+        """
+        Build a data lineage graph from parsed SSIS packages.
+
+        The graph captures how data flows from source tables/files
+        through transformations to destination tables/files.  It can
+        be exported to Mermaid (``graph.to_mermaid()``) or D3.js JSON
+        (``graph.to_d3_json()``), and supports impact analysis via
+        ``graph.get_downstream()`` / ``graph.get_upstream()``.
+
+        Parameters
+        ----------
+        packages : list[SSISPackage]
+            Packages returned by :meth:`analyze`.
+
+        Returns
+        -------
+        LineageGraph
+            Graph with nodes and edges that can be traversed or exported.
+        """
+        from ssis_to_fabric.analyzer.lineage import LineageBuilder
+
+        return LineageBuilder().build(packages)
 
     # ------------------------------------------------------------------
     # 2. Plan
