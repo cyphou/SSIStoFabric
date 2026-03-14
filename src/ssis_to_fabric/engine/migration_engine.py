@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
@@ -73,7 +73,7 @@ class MigrationPlan:
     """Complete migration plan for one or more SSIS packages."""
 
     project_name: str
-    created_at: str = field(default_factory=lambda: datetime.now(tz=__import__("datetime").timezone.utc).isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(tz=timezone.utc).isoformat())
     strategy: str = ""
     items: list[MigrationItem] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
@@ -357,7 +357,7 @@ class MigrationEngine:
                 if pkg.name in current_hashes:
                     new_state[pkg.name] = {
                         "hash": current_hashes[pkg.name],
-                        "migrated_at": datetime.now(tz=__import__("datetime").timezone.utc).isoformat(),
+                        "migrated_at": datetime.now(tz=timezone.utc).isoformat(),
                         "file_path": pkg.file_path,
                     }
             _save_migration_state(_state_dir, new_state)

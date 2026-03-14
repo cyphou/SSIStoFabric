@@ -24,7 +24,7 @@ CLI (added via ``ssis2fabric report``)::
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -260,7 +260,7 @@ class ReportGenerator:
         return _HTML_TEMPLATE.format(
             project_name=_esc(report.get("project_name", "Unknown")),
             strategy=_esc(report.get("strategy", "")),
-            generated_at=datetime.now().strftime("%Y-%m-%d %H:%M UTC"),
+            generated_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
             total=total,
             completed=completed,
             errors=error_count,

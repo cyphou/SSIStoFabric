@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import contextlib
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from lxml import etree
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from ssis_to_fabric.analyzer.models import (
     Column,
@@ -242,10 +246,10 @@ class DTSXParser:
             )
         return package
 
-    def _parse_section_safe(self, package: SSISPackage, fn, *args):  # type: ignore[no-untyped-def]
+    def _parse_section_safe(self, package: SSISPackage, fn: Callable[..., Any], *args: Any) -> list[Any]:
         """Call a parse sub-method; on error record a warning and return []."""
         try:
-            return fn(*args)
+            return fn(*args)  # type: ignore[no-any-return]
         except Exception as exc:  # noqa: BLE001
             warn_msg = f"Partial parse error in {Path(package.file_path).name} ({fn.__name__}): {exc}"
             logger.warning("parse_section_error", section=fn.__name__, error=str(exc))

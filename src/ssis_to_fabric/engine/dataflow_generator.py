@@ -706,16 +706,6 @@ class DataflowGen2Generator:
             """Shorthand recursive call."""
             return DataflowGen2Generator._ssis_expr_to_m(s)
 
-        def _col(s: str) -> str:
-            """Wrap a bare identifier in [brackets] for Power Query column refs."""
-            s = s.strip()
-            if s.startswith("[") or s.startswith('"') or s.startswith("'"):
-                return s
-            # Already a function call result or complex expression — leave as-is
-            if "(" in s or " " in s:
-                return s
-            return f"[{s}]"
-
         # ------------------------------------------------------------------
         # 1. SSIS variable / parameter references
         # ------------------------------------------------------------------
@@ -944,8 +934,6 @@ class DataflowGen2Generator:
         if ternary:
             return f"if {ternary.group(1)} then {ternary.group(2)} else {ternary.group(3)}"
 
-        # Suppress unused warning for _col helper (used in some paths)
-        _ = _col
         return expr
 
     @staticmethod

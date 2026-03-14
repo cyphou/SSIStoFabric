@@ -50,3 +50,6 @@ Thumbs.db
 # Debug / scratch files — anything prefixed with _
 _*.py
 _*.txt
+
+# SSIStoFabric runtime state
+.ssis2fabric/
