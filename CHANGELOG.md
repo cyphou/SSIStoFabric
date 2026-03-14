@@ -11,14 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > The following phases are planned. Each will be released as a minor or major version.
 
-### Phase 14 — Integrations & Ecosystem *(v2.2.0)*
-- Azure Key Vault secret resolution for connection credentials
-- Power BI dataset generation from lineage graph
-- dbt model scaffolding from generated Spark notebooks
-- Webhook notifications (Slack, Microsoft Teams, email) on migration events
-- GitHub Actions marketplace action (`ssis-to-fabric-action`)
-- `ssis2fabric init` command to generate starter `migration_config.yaml`
-
 ### Phase 15 — Enterprise Scale *(v2.3.0)*
 - RBAC support (role-based package-level access control with Azure AD groups)
 - Multi-tenant migration (parallel deployment to multiple workspace targets)
@@ -34,6 +26,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migration cookbook (common SSIS patterns with before/after code comparisons)
 - JSON Schema export for `migration_config.yaml` validation by external tools
 - VS Code extension (inline assessment, syntax highlighting for generated artifacts)
+
+---
+
+## [2.2.0] - 2026-03-14
+
+### 🔌 Phase 14 — Integrations & Ecosystem
+
+#### Azure Key Vault Secret Resolution
+- `keyvault://vault-name/secret-name` reference pattern for config values
+- `resolve_keyvault_reference()`: resolves secrets via Azure SDK (with fallback placeholder)
+- `resolve_config_secrets()`: walks config dict and resolves all Key Vault references
+- `is_keyvault_reference()`: detection helper
+- `KeyVaultConfig` dataclass: vault URL, credential type, caching options
+
+#### Power BI Dataset Generation
+- `generate_powerbi_dataset_from_lineage()`: creates thin dataset from lineage graph
+- Uses destination tables (writers) from lineage as dataset tables
+- `PowerBIDataset` / `PowerBITable` dataclasses with `to_dict()` serialization
+- `ssis2fabric powerbi-dataset` CLI command: generates `.dataset.json` from lineage
+
+#### dbt Model Scaffolding
+- `scaffold_dbt_models_from_notebooks()`: extracts SQL and table references from notebooks
+- Generates dbt SQL model files with `{{ config() }}` blocks
+- Generates `schema.yml` with model metadata and tags
+- `ssis2fabric dbt-scaffold` CLI command: scaffolds from `notebooks/` directory
+- `DbtModel` dataclass: name, sql, description, materialization, tags
+
+#### Webhook Notifications
+- `WebhookNotifier` class: sends JSON payloads to registered webhook URLs
+- Event filtering: only notifies webhooks subscribed to specific events
+- `WebhookConfig`: URL, custom headers, event subscription list
+- `format_slack_message()`: Slack Block Kit message formatting
+- `format_teams_message()`: Microsoft Teams Adaptive Card formatting
+
+#### Init Command
+- `ssis2fabric init` CLI command: generates starter `migration_config.yaml`
+- Options: `--project-name`, `--packages-path`, `--workspace-id`, `--output`
+- Refuses to overwrite existing config files
+- Generated YAML includes Key Vault reference comments and all config sections
 
 ---
 

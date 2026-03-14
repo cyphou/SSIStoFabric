@@ -1083,3 +1083,102 @@ def validate_deploy(
         sys.exit(1)
     else:
         console.print(f"\n[yellow]{len(result.warnings)} warning(s) — review recommended.[/yellow]")
+
+
+@main.command(name="init")
+@click.option(
+    "--project-name",
+    default="my-ssis-migration",
+    help="Project name for the configuration.",
+)
+@click.option(
+    "--packages-path",
+    default="",
+    help="Path to SSIS packages directory.",
+)
+@click.option(
+    "--workspace-id",
+    default="",
+    help="Fabric workspace ID.",
+)
+@click.option(
+    "--output",
+    "-o",
+    default="migration_config.yaml",
+    help="Output config file path.",
+)
+@click.pass_context
+def init_config(
+    ctx: click.Context,
+    project_name: str,
+    packages_path: str,
+    workspace_id: str,
+    output: str,
+) -> None:
+    """Generate a starter migration_config.yaml file."""
+    from ssis_to_fabric.engine.integrations import write_init_config
+
+    out_path = Path(output)
+    if out_path.exists():
+        console.print(f"[yellow]{output} already exists. Use a different --output path.[/yellow]")
+        sys.exit(1)
+
+    write_init_config(out_path, project_name, packages_path, workspace_id)
+    console.print(f"[green]Created {output}[/green]")
+    console.print("Edit the file with your connection details, then run: ssis2fabric migrate")
+
+
+@main.command(name="dbt-scaffold")
+@click.argument("output_dir", type=click.Path(exists=True))
+@click.option("--dbt-output", default=None, help="Output directory for dbt models (default: output_dir/dbt)")
+@click.pass_context
+def dbt_scaffold(
+    ctx: click.Context,
+    output_dir: str,
+    dbt_output: str | None,
+) -> None:
+    """Scaffold dbt models from generated Spark notebooks."""
+    from ssis_to_fabric.engine.integrations import scaffold_dbt_models_from_notebooks, write_dbt_models
+
+    nb_dir = Path(output_dir) / "notebooks"
+    dbt_dir = Path(dbt_output) if dbt_output else Path(output_dir) / "dbt"
+
+    models = scaffold_dbt_models_from_notebooks(nb_dir)
+    if not models:
+        console.print("[yellow]No notebooks found to scaffold dbt models from.[/yellow]")
+        return
+
+    paths = write_dbt_models(models, dbt_dir)
+    console.print(f"[green]Scaffolded {len(models)} dbt model(s):[/green]")
+    for p in paths:
+        console.print(f"  {p}")
+
+
+@main.command(name="powerbi-dataset")
+@click.argument("output_dir", type=click.Path(exists=True))
+@click.option("--dataset-name", default="Migration Dataset", help="Name for the Power BI dataset.")
+@click.pass_context
+def powerbi_dataset(
+    ctx: click.Context,
+    output_dir: str,
+    dataset_name: str,
+) -> None:
+    """Generate a Power BI dataset definition from migration lineage."""
+    import json
+
+    from ssis_to_fabric.engine.integrations import (
+        generate_powerbi_dataset_from_lineage,
+        write_powerbi_dataset,
+    )
+
+    lineage_dir = Path(output_dir) / "lineage.json"
+    lineage_file = lineage_dir / "lineage.json"
+    if not lineage_file.exists():
+        console.print("[red]No lineage.json found. Run 'ssis2fabric migrate' first.[/red]")
+        sys.exit(1)
+
+    lineage_data = json.loads(lineage_file.read_text(encoding="utf-8"))
+    dataset = generate_powerbi_dataset_from_lineage(lineage_data, dataset_name)
+    path = write_powerbi_dataset(dataset, Path(output_dir))
+    console.print(f"[green]Power BI dataset definition written to {path}[/green]")
+    console.print(f"  Tables: {len(dataset.tables)}")
