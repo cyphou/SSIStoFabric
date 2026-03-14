@@ -1336,10 +1336,11 @@ class SparkNotebookGenerator:
         return is_transform(comp)
 
     @staticmethod
-    def _ssis_expr_to_pyspark(expr: str) -> str:
-        """Best-effort SSIS expression → PySpark expression.
+    def _ssis_expr_to_pyspark(expr: str) -> str:  # noqa: C901
+        """Recursive SSIS expression → PySpark expression transpiler.
 
-        Handles common patterns. Complex expressions need manual review.
+        Handles nested function calls, bitwise operators, trig functions,
+        and validates unrecognised patterns.
         """
         import re as _re
 
@@ -1348,24 +1349,89 @@ class SparkNotebookGenerator:
 
         result = expr.strip()
 
-        # @[$Package::VarName] → Python variable reference
+        # ------------------------------------------------------------------
+        # Internal helpers (mirrors M transpiler architecture)
+        # ------------------------------------------------------------------
+
+        def _find_close_paren(s: str, open_pos: int) -> int:
+            depth = 0
+            in_str = False
+            for i in range(open_pos, len(s)):
+                ch = s[i]
+                if ch == '"' and (i == 0 or s[i - 1] != '\\'):
+                    in_str = not in_str
+                if in_str:
+                    continue
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        return i
+            return -1
+
+        def _split_args(s: str) -> list[str]:
+            args: list[str] = []
+            depth = 0
+            in_str = False
+            current: list[str] = []
+            for ch in s:
+                if ch == '"':
+                    in_str = not in_str
+                    current.append(ch)
+                elif in_str:
+                    current.append(ch)
+                elif ch in ("(", "["):
+                    depth += 1
+                    current.append(ch)
+                elif ch in (")", "]"):
+                    depth -= 1
+                    current.append(ch)
+                elif ch == "," and depth == 0:
+                    args.append("".join(current).strip())
+                    current = []
+                else:
+                    current.append(ch)
+            if current:
+                args.append("".join(current).strip())
+            return [a for a in args if a]
+
+        def _conv(s: str) -> str:
+            return SparkNotebookGenerator._ssis_expr_to_pyspark(s)
+
+        def _col_or_lit(s: str) -> str:
+            """Wrap a simple arg as F.col or F.lit depending on content."""
+            s = s.strip()
+            if s.startswith('"') and s.endswith('"'):
+                return f"F.lit({s})"
+            if s.isdigit() or (s.startswith("-") and s[1:].isdigit()):
+                return f"F.lit({s})"
+            try:
+                float(s)
+                return f"F.lit({s})"
+            except ValueError:
+                pass
+            if s.startswith("F.") or s.startswith("("):
+                return s
+            return f'F.col("{s}")'
+
+        # ------------------------------------------------------------------
+        # 1. Variable references — whole-expression
+        # ------------------------------------------------------------------
         m = _re.match(r'^@\[\$Package::([\w]+)\]$', result)
         if m:
             return f'F.lit({SparkNotebookGenerator._sanitize_name(m.group(1)).upper()})'
-        # @[User::VarName] → Python variable reference
         m = _re.match(r'^@\[User::([\w]+)\]$', result)
         if m:
             return f'F.lit({SparkNotebookGenerator._sanitize_name(m.group(1)).upper()})'
-        # @[Namespace::VarName] — any namespace (e.g. SystemLog::intLoadID)
         m = _re.match(r'^@\[[\w\$]+::([\w]+)\]$', result)
         if m:
             return f'F.lit({SparkNotebookGenerator._sanitize_name(m.group(1)).upper()})'
-        # @[VarName] — simple variable ref
         m = _re.match(r'^@\[([\w]+)\]$', result)
         if m:
             return f'F.lit({SparkNotebookGenerator._sanitize_name(m.group(1)).upper()})'
 
-        # Inline references within larger expressions
+        # Inline variable references within larger expressions
         result = _re.sub(
             r'@\[\$Package::([\w]+)\]',
             lambda mm: SparkNotebookGenerator._sanitize_name(mm.group(1)).upper(),
@@ -1376,185 +1442,199 @@ class SparkNotebookGenerator:
             lambda mm: SparkNotebookGenerator._sanitize_name(mm.group(1)).upper(),
             result,
         )
-        # Generic @[Namespace::Var] inline
         result = _re.sub(
             r'@\[[\w\$]+::([\w]+)\]',
             lambda mm: SparkNotebookGenerator._sanitize_name(mm.group(1)).upper(),
             result,
         )
 
-        # GETDATE() → F.current_timestamp()
+        # ------------------------------------------------------------------
+        # 2. GETDATE / GETUTCDATE as inline substitution
+        # ------------------------------------------------------------------
         result = _re.sub(r"\bGETDATE\s*\(\s*\)", "F.current_timestamp()", result, flags=_re.IGNORECASE)
+        _utc_repl = "F.to_utc_timestamp(F.current_timestamp(), 'UTC')"
+        result = _re.sub(r"\bGETUTCDATE\s*\(\s*\)", _utc_repl, result, flags=_re.IGNORECASE)
 
-        # DATEADD("part", num, col) → F.date_add / F.add_months
-        m = _re.match(
-            r'^DATEADD\s*\(\s*"?(\w+)"?\s*,\s*(-?\d+)\s*,\s*(\w+)\s*\)$',
-            result, _re.IGNORECASE,
-        )
-        if m:
-            part, n, col = m.group(1).lower(), m.group(2), m.group(3)
-            if part in ("dd", "day", "d"):
-                return f'F.date_add(F.col("{col}"), {n})'
-            if part in ("mm", "month", "m"):
-                return f'F.add_months(F.col("{col}"), {n})'
-            if part in ("yyyy", "year", "yy"):
-                return f'F.add_months(F.col("{col}"), {n} * 12)'
-            if part in ("hh", "hour"):
-                return f'(F.col("{col}") + F.expr("INTERVAL {n} HOURS"))'
-            if part in ("mi", "minute", "n"):
-                return f'(F.col("{col}") + F.expr("INTERVAL {n} MINUTES"))'
-            if part in ("ss", "second", "s"):
-                return f'(F.col("{col}") + F.expr("INTERVAL {n} SECONDS"))'
-            return f'F.expr("date_add({col}, {n})")'
+        # ------------------------------------------------------------------
+        # 3. Top-level function call — dispatch & recurse into arguments
+        # ------------------------------------------------------------------
+        func_match = _re.match(r"^([A-Z_][A-Z0-9_]*)\s*\(", result, _re.IGNORECASE)
+        if func_match:
+            func_name = func_match.group(1).upper()
+            open_idx = result.index("(", func_match.start())
+            close_idx = _find_close_paren(result, open_idx)
+            if close_idx >= 0:
+                args_raw = result[open_idx + 1 : close_idx]
+                args = _split_args(args_raw)
+                tail = result[close_idx + 1 :].strip()
 
-        # DATEDIFF("part", start, end) → F.datediff
-        m = _re.match(
-            r'^DATEDIFF\s*\(\s*"?(\w+)"?\s*,\s*(\w+)\s*,\s*(\w+)\s*\)$',
-            result, _re.IGNORECASE,
-        )
-        if m:
-            part, start, end = m.group(1).lower(), m.group(2), m.group(3)
-            if part in ("dd", "day", "d"):
-                return f'F.datediff(F.col("{end}"), F.col("{start}"))'
-            if part in ("mm", "month", "m"):
-                return f'F.months_between(F.col("{end}"), F.col("{start}")).cast("int")'
-            return f'F.datediff(F.col("{end}"), F.col("{start}"))'
+                # ---- Date functions ----
+                if func_name == "DATEADD" and len(args) == 3:
+                    part = args[0].strip().strip('"').strip("'").lower()
+                    n_arg = _conv(args[1])
+                    col_arg = _conv(args[2])
+                    if part in ("dd", "day", "d"):
+                        return f"F.date_add({col_arg}, {n_arg}){tail}"
+                    if part in ("mm", "month", "m"):
+                        return f"F.add_months({col_arg}, {n_arg}){tail}"
+                    if part in ("yyyy", "year", "yy"):
+                        return f"F.add_months({col_arg}, {n_arg} * 12){tail}"
+                    if part in ("hh", "hour"):
+                        return f'({col_arg} + F.expr("INTERVAL " + str({n_arg}) + " HOURS")){tail}'
+                    if part in ("mi", "minute", "n"):
+                        return f'({col_arg} + F.expr("INTERVAL " + str({n_arg}) + " MINUTES")){tail}'
+                    if part in ("ss", "second", "s"):
+                        return f'({col_arg} + F.expr("INTERVAL " + str({n_arg}) + " SECONDS")){tail}'
+                    return f'F.expr("date_add({args[2].strip()}, {args[1].strip()})"){tail}'
 
-        # DATEPART("part", col) → F.year / F.month / ...
-        m = _re.match(
-            r'^DATEPART\s*\(\s*"?(\w+)"?\s*,\s*(\w+)\s*\)$',
-            result, _re.IGNORECASE,
-        )
-        if m:
-            part, col = m.group(1).lower(), m.group(2)
-            func_map = {
-                "yyyy": "year", "year": "year", "yy": "year",
-                "mm": "month", "month": "month", "m": "month",
-                "dd": "dayofmonth", "day": "dayofmonth", "d": "dayofmonth",
-                "hh": "hour", "hour": "hour",
-                "mi": "minute", "minute": "minute", "n": "minute",
-                "ss": "second", "second": "second", "s": "second",
-                "dw": "dayofweek", "weekday": "dayofweek",
-                "dy": "dayofyear",
-                "wk": "weekofyear", "week": "weekofyear",
-                "qq": "quarter", "quarter": "quarter",
-            }
-            spark_func = func_map.get(part, "dayofmonth")
-            return f'F.{spark_func}(F.col("{col}"))'
+                if func_name == "DATEDIFF" and len(args) == 3:
+                    part = args[0].strip().strip('"').strip("'").lower()
+                    start_arg, end_arg = _conv(args[1]), _conv(args[2])
+                    if part in ("dd", "day", "d"):
+                        return f"F.datediff({end_arg}, {start_arg}){tail}"
+                    if part in ("mm", "month", "m"):
+                        return f'F.months_between({end_arg}, {start_arg}).cast("int"){tail}'
+                    return f"F.datediff({end_arg}, {start_arg}){tail}"
 
-        # YEAR(col) / MONTH(col) / DAY(col)
-        m = _re.match(r"^(YEAR|MONTH|DAY)\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            func_map = {"YEAR": "year", "MONTH": "month", "DAY": "dayofmonth"}
-            return f'F.{func_map[m.group(1).upper()]}(F.col("{m.group(2)}"))'
+                if func_name == "DATEPART" and len(args) == 2:
+                    part = args[0].strip().strip('"').strip("'").lower()
+                    col_arg = _conv(args[1])
+                    func_map = {
+                        "yyyy": "year", "year": "year", "yy": "year",
+                        "mm": "month", "month": "month", "m": "month",
+                        "dd": "dayofmonth", "day": "dayofmonth", "d": "dayofmonth",
+                        "hh": "hour", "hour": "hour",
+                        "mi": "minute", "minute": "minute", "n": "minute",
+                        "ss": "second", "second": "second", "s": "second",
+                        "dw": "dayofweek", "weekday": "dayofweek",
+                        "dy": "dayofyear",
+                        "wk": "weekofyear", "week": "weekofyear",
+                        "qq": "quarter", "quarter": "quarter",
+                    }
+                    spark_func = func_map.get(part, "dayofmonth")
+                    return f"F.{spark_func}({col_arg}){tail}"
 
-        # ISNULL(col) → F.col("col").isNull()
-        m = _re.match(r"^ISNULL\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").isNull()'
+                if func_name in ("YEAR", "MONTH", "DAY") and len(args) == 1:
+                    fmap = {"YEAR": "year", "MONTH": "month", "DAY": "dayofmonth"}
+                    return f"F.{fmap[func_name]}({_conv(args[0])}){tail}"
 
-        # REPLACENULL(col, replacement) → F.coalesce
-        m = _re.match(
-            r'^REPLACENULL\s*\(\s*(\w+)\s*,\s*(.+?)\s*\)$',
-            result, _re.IGNORECASE,
-        )
-        if m:
-            col, replacement = m.group(1), m.group(2).strip()
-            if replacement.startswith('"') and replacement.endswith('"'):
-                return f'F.coalesce(F.col("{col}"), F.lit({replacement}))'
-            return f'F.coalesce(F.col("{col}"), F.lit({replacement}))'
+                if func_name == "GETDATE" and len(args) == 0:
+                    return f"F.current_timestamp(){tail}"
+                if func_name == "GETUTCDATE" and len(args) == 0:
+                    return f"F.to_utc_timestamp(F.current_timestamp(), 'UTC'){tail}"
 
-        # NULL(DT_WSTR, len) → F.lit(None).cast("string")
-        m = _re.match(r"^NULL\s*\(\s*DT_WSTR\s*,\s*\d+\s*\)$", result, _re.IGNORECASE)
-        if m:
-            return 'F.lit(None).cast("string")'
-        m = _re.match(r"^NULL\s*\(\s*DT_I4\s*\)$", result, _re.IGNORECASE)
-        if m:
-            return 'F.lit(None).cast("int")'
-        m = _re.match(r"^NULL\s*\(\s*DT_(?:R8|FLOAT)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            return 'F.lit(None).cast("double")'
-        m = _re.match(r"^NULL\s*\(\s*DT_(?:DATE|DBTIMESTAMP)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            return 'F.lit(None).cast("timestamp")'
+                # ---- Null functions ----
+                if func_name == "ISNULL" and len(args) == 1:
+                    return f"{_conv(args[0])}.isNull(){tail}"
+                if func_name == "REPLACENULL" and len(args) == 2:
+                    return f"F.coalesce({_conv(args[0])}, {_conv(args[1])}){tail}"
+                if func_name == "NULL" and len(args) >= 1:
+                    dtype = args[0].strip().upper()
+                    type_map = {
+                        "DT_WSTR": "string", "DT_STR": "string",
+                        "DT_I4": "int", "DT_I2": "smallint", "DT_I8": "bigint",
+                        "DT_R4": "float", "DT_R8": "double", "DT_FLOAT": "double",
+                        "DT_BOOL": "boolean",
+                        "DT_DATE": "timestamp", "DT_DBTIMESTAMP": "timestamp",
+                        "DT_DBTIMESTAMP2": "timestamp", "DT_DBDATE": "date",
+                    }
+                    spark_type = type_map.get(dtype, "string")
+                    return f'F.lit(None).cast("{spark_type}"){tail}'
 
-        # UPPER(col) / LOWER(col)
-        m = _re.match(r"^(UPPER|LOWER)\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            func = "upper" if m.group(1).upper() == "UPPER" else "lower"
-            return f'F.{func}(F.col("{m.group(2)}"))'
+                # ---- String functions ----
+                if func_name in ("UPPER", "LOWER") and len(args) == 1:
+                    fn = "upper" if func_name == "UPPER" else "lower"
+                    return f"F.{fn}({_conv(args[0])}){tail}"
+                if func_name in ("LTRIM", "RTRIM", "TRIM") and len(args) == 1:
+                    fmap = {"LTRIM": "ltrim", "RTRIM": "rtrim", "TRIM": "trim"}
+                    return f"F.{fmap[func_name]}({_conv(args[0])}){tail}"
+                if func_name == "LEN" and len(args) == 1:
+                    return f"F.length({_conv(args[0])}){tail}"
+                if func_name == "LEFT" and len(args) == 2:
+                    return f"F.substring({_conv(args[0])}, 1, {_conv(args[1])}){tail}"
+                if func_name == "RIGHT" and len(args) == 2:
+                    col_arg = _conv(args[0])
+                    return f"F.substring({col_arg}, F.length({col_arg}) - {_conv(args[1])} + 1, {_conv(args[1])}){tail}"
+                if func_name == "FINDSTRING" and len(args) >= 2:
+                    return f"F.locate({_conv(args[1])}, {_conv(args[0])}){tail}"
+                if func_name == "TOKEN" and len(args) >= 3:
+                    col_arg = _conv(args[0])
+                    delim = args[1].strip().strip('"')
+                    n_val = int(args[2].strip()) if args[2].strip().isdigit() else 1
+                    escaped_delim = _re.escape(delim)
+                    return f'F.split({col_arg}, "[{escaped_delim}]").getItem({n_val - 1}){tail}'
+                if func_name == "TOKENCOUNT" and len(args) == 2:
+                    col_arg = _conv(args[0])
+                    delim = args[1].strip().strip('"')
+                    escaped_delim = _re.escape(delim)
+                    return f'F.size(F.split({col_arg}, "[{escaped_delim}]")){tail}'
+                if func_name == "REPLACE" and len(args) == 3:
+                    return f"F.regexp_replace({_conv(args[0])}, {_conv(args[1])}, {_conv(args[2])}){tail}"
+                if func_name == "SUBSTRING" and len(args) == 3:
+                    return f"F.substring({_conv(args[0])}, {_conv(args[1])}, {_conv(args[2])}){tail}"
+                if func_name == "REVERSE" and len(args) == 1:
+                    return f"F.reverse({_conv(args[0])}){tail}"
+                if func_name == "CODEPOINT" and len(args) == 1:
+                    return f"F.ascii({_conv(args[0])}){tail}"
+                if func_name == "HEX" and len(args) == 1:
+                    return f"F.hex({_conv(args[0])}){tail}"
 
-        # LTRIM / RTRIM / TRIM
-        m = _re.match(r"^(LTRIM|RTRIM|TRIM)\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            func_map = {"LTRIM": "ltrim", "RTRIM": "rtrim", "TRIM": "trim"}
-            return f'F.{func_map[m.group(1).upper()]}(F.col("{m.group(2)}"))'
+                # ---- Math functions ----
+                if func_name == "ABS" and len(args) == 1:
+                    return f"F.abs({_conv(args[0])}){tail}"
+                if func_name in ("CEILING", "FLOOR") and len(args) == 1:
+                    fn = "ceil" if func_name == "CEILING" else "floor"
+                    return f"F.{fn}({_conv(args[0])}){tail}"
+                if func_name == "ROUND" and len(args) >= 1:
+                    if len(args) == 2:
+                        return f"F.round({_conv(args[0])}, {_conv(args[1])}){tail}"
+                    return f"F.round({_conv(args[0])}){tail}"
+                if func_name == "POWER" and len(args) == 2:
+                    return f"F.pow({_conv(args[0])}, {_conv(args[1])}){tail}"
+                if func_name == "SIGN" and len(args) == 1:
+                    return f"F.signum({_conv(args[0])}){tail}"
+                if func_name == "SQUARE" and len(args) == 1:
+                    return f"F.pow({_conv(args[0])}, 2){tail}"
+                if func_name == "SQRT" and len(args) == 1:
+                    return f"F.sqrt({_conv(args[0])}){tail}"
+                if func_name in ("EXP", "LOG", "LOG10") and len(args) == 1:
+                    fmap = {"EXP": "exp", "LOG": "log", "LOG10": "log10"}
+                    return f"F.{fmap[func_name]}({_conv(args[0])}){tail}"
+                if func_name == "LOG2" and len(args) == 1:
+                    return f"F.log2({_conv(args[0])}){tail}"
 
-        # LEN(col)
-        m = _re.match(r"^LEN\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.length(F.col("{m.group(1)}"))'
+                # ---- Trig functions ----
+                if func_name in ("SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN") and len(args) == 1:
+                    fmap = {
+                        "SIN": "sin", "COS": "cos", "TAN": "tan",
+                        "ASIN": "asin", "ACOS": "acos", "ATAN": "atan",
+                    }
+                    return f"F.{fmap[func_name]}({_conv(args[0])}){tail}"
+                if func_name == "ATAN2" and len(args) == 2:
+                    return f"F.atan2({_conv(args[0])}, {_conv(args[1])}){tail}"
 
-        # RIGHT(col, n) / LEFT(col, n)
-        m = _re.match(r"^(RIGHT|LEFT)\s*\(\s*(\w+)\s*,\s*(\d+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            func_name = m.group(1).upper()
-            col, n = m.group(2), m.group(3)
-            if func_name == "LEFT":
-                return f'F.substring(F.col("{col}"), 1, {n})'
-            return f'F.substring(F.col("{col}"), F.length(F.col("{col}")) - {n} + 1, {n})'
+                # ---- Constants ----
+                if func_name == "PI" and len(args) == 0:
+                    return f"F.lit(3.141592653589793){tail}"
+                if func_name == "RAND" and len(args) <= 1:
+                    return f"F.rand(){tail}"
 
-        # FINDSTRING(col, search, occurrence) → F.locate
-        m = _re.match(
-            r'^FINDSTRING\s*\(\s*(\w+)\s*,\s*"([^"]*)"\s*(?:,\s*(\d+))?\s*\)$',
-            result, _re.IGNORECASE,
-        )
-        if m:
-            col, search = m.group(1), m.group(2)
-            return f'F.locate("{search}", F.col("{col}"))'
+                # ---- Bitwise operators ----
+                if func_name == "BITAND" and len(args) == 2:
+                    return f"({_conv(args[0])}.bitwiseAND({_conv(args[1])}))"
+                if func_name == "BITOR" and len(args) == 2:
+                    return f"({_conv(args[0])}.bitwiseOR({_conv(args[1])}))"
+                if func_name == "BITXOR" and len(args) == 2:
+                    return f"({_conv(args[0])}.bitwiseXOR({_conv(args[1])}))"
 
-        # TOKEN(col, delimiters, n) → F.split + getItem
-        m = _re.match(
-            r'^TOKEN\s*\(\s*(\w+)\s*,\s*"([^"]*)"\s*,\s*(\d+)\s*\)$',
-            result, _re.IGNORECASE,
-        )
-        if m:
-            col, delim, n = m.group(1), m.group(2), int(m.group(3))
-            escaped_delim = _re.escape(delim)
-            return f'F.split(F.col("{col}"), "[{escaped_delim}]").getItem({n - 1})'
+                # ---- Concatenation operator ----
+                if func_name == "CONCATENATE":
+                    parts = [_conv(a) for a in args]
+                    return f'F.concat({", ".join(parts)}){tail}'
 
-        # REVERSE(col)
-        m = _re.match(r"^REVERSE\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.reverse(F.col("{m.group(1)}"))'
-
-        # CODEPOINT(col) → ascii value of first char
-        m = _re.match(r"^CODEPOINT\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.ascii(F.col("{m.group(1)}"))'
-
-        # TOKENCOUNT(col, delimiters) → count of tokens
-        m = _re.match(
-            r'^TOKENCOUNT\s*\(\s*(\w+)\s*,\s*"([^"]*)"\s*\)$',
-            result, _re.IGNORECASE,
-        )
-        if m:
-            col, delim = m.group(1), m.group(2)
-            escaped_delim = _re.escape(delim)
-            return f'F.size(F.split(F.col("{col}"), "[{escaped_delim}]"))'
-
-        # REPLACE(col, old, new)
-        m = _re.match(r'^REPLACE\s*\(\s*(\w+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\)$', result, _re.IGNORECASE)
-        if m:
-            return f'F.regexp_replace(F.col("{m.group(1)}"), "{m.group(2)}", "{m.group(3)}")'
-
-        # SUBSTRING(col, start, len)
-        m = _re.match(r"^SUBSTRING\s*\(\s*(\w+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.substring(F.col("{m.group(1)}"), {m.group(2)}, {m.group(3)})'
-
-        # CONCATENATE / string concatenation with +
-        # "literal" + col + "literal" → F.concat
+        # ------------------------------------------------------------------
+        # 4. String concatenation with +
+        # ------------------------------------------------------------------
         if _re.search(r'"[^"]*"\s*\+\s*\w+|\w+\s*\+\s*"[^"]*"', result):
             parts = [p.strip() for p in result.split("+")]
             spark_parts = []
@@ -1565,134 +1645,57 @@ class SparkNotebookGenerator:
                     spark_parts.append(f'F.col("{p}")')
             return f'F.concat({", ".join(spark_parts)})'
 
-        # ABS(col)
-        m = _re.match(r"^ABS\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.abs(F.col("{m.group(1)}"))'
+        # ------------------------------------------------------------------
+        # 5. Data type casts — (DT_*) operand
+        # ------------------------------------------------------------------
+        _cast_patterns: list[tuple[str, str]] = [
+            (r"^\(DT_STR\s*,\s*\d+\s*,\s*\d+\s*\)\s*(.+)$", "string"),
+            (r"^\(DT_WSTR\s*,\s*\d+\s*\)\s*(.+)$", "string"),
+            (r"^\(DT_(?:I1|UI1)\)\s*(.+)$", "tinyint"),
+            (r"^\(DT_(?:I2|UI2)\)\s*(.+)$", "smallint"),
+            (r"^\(DT_I4\)\s*(.+)$", "int"),
+            (r"^\(DT_UI4\)\s*(.+)$", "int"),
+            (r"^\(DT_(?:I8|UI8)\)\s*(.+)$", "bigint"),
+            (r"^\(DT_R4\)\s*(.+)$", "float"),
+            (r"^\(DT_R8\)\s*(.+)$", "double"),
+            (r"^\(DT_CY\)\s*(.+)$", "decimal(19,4)"),
+            (r"^\(DT_BOOL\)\s*(.+)$", "boolean"),
+            (r"^\(DT_(?:DATE|DBDATE)\)\s*(.+)$", "date"),
+            (r"^\(DT_DBTIMESTAMP2?\)\s*(.+)$", "timestamp"),
+            (r"^\(DT_GUID\)\s*(.+)$", "string"),
+        ]
+        for pat, spark_type in _cast_patterns:
+            cm = _re.match(pat, result, _re.IGNORECASE)
+            if cm:
+                inner = _conv(cm.group(1).strip())
+                return f'{inner}.cast("{spark_type}")'
 
-        # CEILING(col) / FLOOR(col)
-        m = _re.match(r"^(CEILING|FLOOR)\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            func = "ceil" if m.group(1).upper() == "CEILING" else "floor"
-            return f'F.{func}(F.col("{m.group(2)}"))'
+        cm = _re.match(r"^\(DT_DECIMAL\s*,\s*(\d+)\s*\)\s*(.+)$", result, _re.IGNORECASE)
+        if cm:
+            return f'{_conv(cm.group(2).strip())}.cast("decimal(38,{cm.group(1)})")'
+        cm = _re.match(r"^\(DT_NUMERIC\s*,\s*(\d+)\s*,\s*(\d+)\s*\)\s*(.+)$", result, _re.IGNORECASE)
+        if cm:
+            return f'{_conv(cm.group(3).strip())}.cast("decimal({cm.group(1)},{cm.group(2)})")'
+        cm = _re.match(r"^\(DT_BYTES\s*,\s*\d+\s*\)\s*(.+)$", result, _re.IGNORECASE)
+        if cm:
+            return f'{_conv(cm.group(1).strip())}.cast("binary")'
 
-        # ROUND(col, precision)
-        m = _re.match(r"^ROUND\s*\(\s*(\w+)\s*,\s*(\d+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.round(F.col("{m.group(1)}"), {m.group(2)})'
-
-        # POWER(col, exp)
-        m = _re.match(r"^POWER\s*\(\s*(\w+)\s*,\s*(\d+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.pow(F.col("{m.group(1)}"), {m.group(2)})'
-
-        # SIGN(col)
-        m = _re.match(r"^SIGN\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.signum(F.col("{m.group(1)}"))'
-
-        # SQUARE(col)
-        m = _re.match(r"^SQUARE\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.pow(F.col("{m.group(1)}"), 2)'
-
-        # SQRT(col)
-        m = _re.match(r"^SQRT\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.sqrt(F.col("{m.group(1)}"))'
-
-        # EXP(col) / LOG(col) / LOG10(col)
-        m = _re.match(r"^(EXP|LOG|LOG10)\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            func_map = {"EXP": "exp", "LOG": "log", "LOG10": "log10"}
-            return f'F.{func_map[m.group(1).upper()]}(F.col("{m.group(2)}"))'
-
-        # HEX(col)
-        m = _re.match(r"^HEX\s*\(\s*(\w+)\s*\)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.hex(F.col("{m.group(1)}"))'
-
-        # --- Data type casts ---
-        # (DT_STR,len,codepage) col → col.cast("string")
-        m = _re.match(r"^\(DT_STR\s*,\s*\d+\s*,\s*\d+\s*\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").cast("string")'
-        # (DT_WSTR,len) col → col.cast("string")
-        m = _re.match(r"^\(DT_WSTR\s*,\s*\d+\s*\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").cast("string")'
-        # (DT_I1) / (DT_UI1) → tinyint
-        m = _re.match(r"^\(DT_(?:I1|UI1)\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").cast("tinyint")'
-        # (DT_I2) / (DT_UI2) → smallint
-        m = _re.match(r"^\(DT_(?:I2|UI2)\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").cast("smallint")'
-        # (DT_I4) → int
-        m = _re.match(r"^\(DT_I4\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").cast("int")'
-        # (DT_UI4) → int (unsigned not native in Spark)
-        m = _re.match(r"^\(DT_UI4\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").cast("int")'
-        # (DT_I8) / (DT_UI8) → bigint
-        m = _re.match(r"^\(DT_(?:I8|UI8)\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").cast("bigint")'
-        # (DT_R4) → float
-        m = _re.match(r"^\(DT_R4\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").cast("float")'
-        # (DT_R8) → double
-        m = _re.match(r"^\(DT_R8\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").cast("double")'
-        # (DT_DECIMAL,scale) / (DT_NUMERIC,precision,scale) → decimal
-        m = _re.match(r"^\(DT_DECIMAL\s*,\s*(\d+)\s*\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(2)}").cast("decimal(38,{m.group(1)})")'
-        m = _re.match(r"^\(DT_NUMERIC\s*,\s*(\d+)\s*,\s*(\d+)\s*\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(3)}").cast("decimal({m.group(1)},{m.group(2)})")'
-        # (DT_CY) → decimal(19,4) (currency)
-        m = _re.match(r"^\(DT_CY\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").cast("decimal(19,4)")'
-        # (DT_BOOL) → boolean
-        m = _re.match(r"^\(DT_BOOL\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").cast("boolean")'
-        # (DT_DATE) / (DT_DBDATE) → date
-        m = _re.match(r"^\(DT_(?:DATE|DBDATE)\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").cast("date")'
-        # (DT_DBTIMESTAMP) / (DT_DBTIMESTAMP2) → timestamp
-        m = _re.match(r"^\(DT_DBTIMESTAMP2?\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").cast("timestamp")'
-        # (DT_GUID) → string
-        m = _re.match(r"^\(DT_GUID\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").cast("string")'
-        # (DT_BYTES,len) → binary
-        m = _re.match(r"^\(DT_BYTES\s*,\s*\d+\s*\)\s*(\w+)$", result, _re.IGNORECASE)
-        if m:
-            return f'F.col("{m.group(1)}").cast("binary")'
-
-        # --- Ternary: cond ? a : b → F.when(cond, a).otherwise(b) ---
+        # ------------------------------------------------------------------
+        # 6. Ternary: cond ? a : b → F.when(cond, a).otherwise(b)
+        # ------------------------------------------------------------------
         m = _re.match(r'^(.+?)\s*\?\s*(.+?)\s*:\s*(.+)$', result)
         if m:
-            cond, then, else_ = m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
-            return f'F.when(F.expr("{cond}"), F.expr("{then}")).otherwise(F.expr("{else_}"))'
+            cond = _conv(m.group(1).strip())
+            then = _conv(m.group(2).strip())
+            else_ = _conv(m.group(3).strip())
+            return f"F.when(F.expr({cond!r}), {then}).otherwise({else_})"
 
-        # --- Boolean operators ---
-        # col == val / col != val / col > val etc. → pass through as expr
-        # || → .or. and && → .and.
+        # ------------------------------------------------------------------
+        # 7. Boolean operators
+        # ------------------------------------------------------------------
         result = result.replace("||", " | ").replace("&&", " & ")
 
-        # Fallback – no inline comment so it can be safely embedded in withColumn()
+        # Fallback
         return f'F.expr("{result}")'
 
     def _write_destination_manifest(

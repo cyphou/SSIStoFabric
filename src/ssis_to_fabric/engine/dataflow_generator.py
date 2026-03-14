@@ -692,8 +692,17 @@ class DataflowGen2Generator:
             args: list[str] = []
             depth = 0
             current: list[str] = []
+            in_str = False
             for ch in s:
-                if ch in ("(", "["):
+                if ch == '"' and not in_str:
+                    in_str = True
+                    current.append(ch)
+                elif ch == '"' and in_str:
+                    in_str = False
+                    current.append(ch)
+                elif in_str:
+                    current.append(ch)
+                elif ch in ("(", "["):
                     depth += 1
                     current.append(ch)
                 elif ch in (")", "]"):
@@ -927,12 +936,39 @@ class DataflowGen2Generator:
                     return f"Number.Log({_conv(args[0])}){tail}"
                 if func_name == "LOG10" and len(args) == 1:
                     return f"Number.Log10({_conv(args[0])}){tail}"
+                if func_name == "LOG2" and len(args) == 1:
+                    return f"Number.Log(Number.Log({_conv(args[0])}) / Number.Log(2)){tail}"
+
+                # ---- Trig functions ----
+                if func_name in ("SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN") and len(args) == 1:
+                    return f"Number.{func_name.capitalize()}({_conv(args[0])}){tail}"
+                if func_name == "ATAN2" and len(args) == 2:
+                    return f"Number.Atan2({_conv(args[0])}, {_conv(args[1])}){tail}"
+
+                # ---- Constants ----
+                if func_name == "PI" and len(args) == 0:
+                    return f"Number.PI{tail}"
+                if func_name == "RAND" and len(args) <= 1:
+                    return f"Number.Random(){tail}"
+
+                # ---- Bitwise operators ----
+                if func_name == "BITAND" and len(args) == 2:
+                    return f"Number.BitwiseAnd({_conv(args[0])}, {_conv(args[1])}){tail}"
+                if func_name == "BITOR" and len(args) == 2:
+                    return f"Number.BitwiseOr({_conv(args[0])}, {_conv(args[1])}){tail}"
+                if func_name == "BITXOR" and len(args) == 2:
+                    return f"Number.BitwiseXor({_conv(args[0])}, {_conv(args[1])}){tail}"
+
+                if func_name == "GETUTCDATE" and len(args) == 0:
+                    return f"DateTimeZone.UtcNow(){tail}"
 
         # ------------------------------------------------------------------
         # 4. Miscellaneous non-function patterns
         # ------------------------------------------------------------------
         # GETDATE() anywhere in expression
         expr = _re.sub(r"\bGETDATE\s*\(\s*\)", "DateTime.LocalNow()", expr, flags=_re.IGNORECASE)
+        # GETUTCDATE()
+        expr = _re.sub(r"\bGETUTCDATE\s*\(\s*\)", "DateTimeZone.UtcNow()", expr, flags=_re.IGNORECASE)
         # ISNULL(simple_col)
         expr = _re.sub(r"\bISNULL\s*\(\s*(\w+)\s*\)", r"[\1] = null", expr, flags=_re.IGNORECASE)
         # YEAR/MONTH/DAY(simple_col)

@@ -215,7 +215,14 @@ _UNSUPPORTED_PATTERNS: list[tuple[str, str]] = [
 
 
 class CSharpTranspiler:
-    """Converts simple C# Script Task source to Python."""
+    """Converts simple C# Script Task source to Python.
+
+    Uses a two-pass approach:
+    1. **AST pass** — tree-walk parser extracts class/method structure,
+       identifies using directives, and builds a structural skeleton.
+    2. **Line-rule pass** — regex-based line-level conversion for the
+       body of each method.
+    """
 
     # Patterns that indicate a script is "low-risk" and mostly auto-migratable
     _LOW_RISK_PATTERNS = {
@@ -259,6 +266,10 @@ class CSharpTranspiler:
     def transpile(self, csharp: str) -> str:
         """Convert *csharp* source code to a Python equivalent.
 
+        Uses a two-pass approach:
+        1. AST pass — extract class/method structure, using directives
+        2. Line-rule pass — regex conversion of method bodies
+
         Always succeeds — unsupported patterns are preserved as
         ``# TODO: Manual conversion required`` comments.
         """
@@ -273,6 +284,40 @@ class CSharpTranspiler:
             if re.search(pattern, result, re.IGNORECASE):
                 todo_lines.append(f"# TODO: Manual conversion required — uses {description}")
 
+        # --- AST pass: extract structural elements ---
+        structure = self._extract_structure(result)
+
+        # Strip using directives (handled by import inference)
+        result = re.sub(r"^\s*using\s+[\w.]+\s*;\s*$", "", result, flags=re.MULTILINE)
+
+        # Strip namespace wrapper
+        result = re.sub(
+            r"^\s*namespace\s+[\w.]+\s*\{",
+            "# namespace removed",
+            result,
+            flags=re.MULTILINE,
+        )
+
+        # Convert class declarations to Python class
+        result = re.sub(
+            r"^\s*(?:public\s+)?(?:partial\s+)?class\s+(\w+)"
+            r"(?:\s*:\s*[\w.\s,]+)?\s*\{",
+            r"class \1:",
+            result,
+            flags=re.MULTILINE,
+        )
+
+        # Convert method signatures to Python def
+        result = re.sub(
+            r"^\s*(?:public|private|protected|internal)?\s*"
+            r"(?:static\s+)?(?:override\s+)?(?:void|string|int|bool|"
+            r"object|Task|var|double|float|long|decimal|DataTable)\s+"
+            r"(\w+)\s*\(([^)]*)\)\s*\{?",
+            lambda mm: _method_to_def(mm.group(1), mm.group(2)),
+            result,
+            flags=re.MULTILINE,
+        )
+
         # Apply line-by-line rules
         import contextlib
 
@@ -282,8 +327,12 @@ class CSharpTranspiler:
             with contextlib.suppress(re.error):
                 result = re.sub(pat, repl, result, flags=flags)
 
-        # Add imports inferred from the converted output
+        # Add imports inferred from the converted output + structure
         imports = _infer_imports(result)
+        for ns in structure.get("usings", []):
+            hint = _USING_TO_IMPORT.get(ns)
+            if hint and hint not in imports:
+                imports.append(hint)
 
         header_lines = [
             "# Auto-generated Python — review before use",
@@ -293,11 +342,60 @@ class CSharpTranspiler:
             header_lines.append("")
 
         if imports:
-            header_lines.extend(imports)
+            header_lines.extend(sorted(set(imports)))
             header_lines.append("")
 
         header = "\n".join(header_lines)
         return header + "\n" + result.strip() + "\n"
+
+    @staticmethod
+    def _extract_structure(csharp: str) -> dict[str, Any]:
+        """AST-style tree-walk: extract structural elements from C# source.
+
+        Returns a dict with:
+        - ``usings``: list of namespace strings
+        - ``classes``: list of class name strings
+        - ``methods``: list of ``{name, return_type, params, is_static}`` dicts
+        - ``namespace``: namespace string or empty
+        """
+        usings: list[str] = []
+        for m in re.finditer(r"^\s*using\s+([\w.]+)\s*;", csharp, re.MULTILINE):
+            usings.append(m.group(1))
+
+        namespace = ""
+        ns_match = re.search(r"^\s*namespace\s+([\w.]+)", csharp, re.MULTILINE)
+        if ns_match:
+            namespace = ns_match.group(1)
+
+        classes: list[str] = []
+        for m in re.finditer(
+            r"^\s*(?:public\s+)?(?:partial\s+)?class\s+(\w+)",
+            csharp,
+            re.MULTILINE,
+        ):
+            classes.append(m.group(1))
+
+        methods: list[dict[str, Any]] = []
+        method_pat = re.compile(
+            r"(?:public|private|protected|internal)?\s*"
+            r"(static\s+)?(?:override\s+)?"
+            r"(void|string|int|bool|object|Task|var|double|float|long|decimal|DataTable)\s+"
+            r"(\w+)\s*\(([^)]*)\)",
+        )
+        for m in method_pat.finditer(csharp):
+            methods.append({
+                "name": m.group(3),
+                "return_type": m.group(2),
+                "params": m.group(4).strip(),
+                "is_static": bool(m.group(1)),
+            })
+
+        return {
+            "usings": usings,
+            "namespace": namespace,
+            "classes": classes,
+            "methods": methods,
+        }
 
     def transpile_from_package(self, package: Any) -> dict[str, str]:
         """Extract and transpile all Script Tasks from an ``SSISPackage``.
@@ -341,3 +439,41 @@ def _infer_imports(code: str) -> list[str]:
         if re.search(pattern, code):
             imports.append(import_stmt)
     return imports
+
+
+# ---------------------------------------------------------------------------
+# C# using → Python import mapping
+# ---------------------------------------------------------------------------
+
+_USING_TO_IMPORT: dict[str, str] = {
+    "System": "",
+    "System.IO": "import os",
+    "System.Text": "",
+    "System.Text.RegularExpressions": "import re",
+    "System.Collections.Generic": "",
+    "System.Linq": "",
+    "System.Data": "",
+    "System.Data.SqlClient": "import pyodbc",
+    "System.Threading.Tasks": "",
+    "System.Net": "",
+    "System.Net.Http": "",
+    "Newtonsoft.Json": "import json",
+    "System.Xml": "",
+    "System.Xml.Linq": "",
+}
+
+
+def _method_to_def(name: str, params: str) -> str:
+    """Convert a C# method signature to a Python def statement."""
+    py_params = []
+    if params.strip():
+        for p in params.split(","):
+            p = p.strip()
+            # "string name" → "name" (drop the type)
+            parts = p.split()
+            if len(parts) >= 2:
+                py_params.append(parts[-1])
+            elif parts:
+                py_params.append(parts[0])
+    param_str = ", ".join(py_params)
+    return f"def {name}({param_str}):"

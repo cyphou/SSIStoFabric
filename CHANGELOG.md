@@ -11,13 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > The following phases are planned. Each will be released as a minor or major version.
 
-### Phase 8 — Expression & Transpiler Completeness *(v1.6.0)*
-- Bitwise operators (`BITAND`, `BITOR`, `BITXOR`) in both PySpark and M
-- Deeply nested expression handling (10+ levels) with stack-based evaluator
-- C# transpiler AST mode (tree-walk parser for complex Script Tasks, replacing fragile regex)
-- Expression validation & error reporting (detect invalid references, type mismatches)
-- Full Power Query M parity for all remaining expression gaps (array subscripting, escaped quotes)
-
 ### Phase 9 — Plugin Architecture *(v1.7.0)*
 - `TransformationStrategy` protocol for custom component generators
 - Component handler registry (register/unregister handlers at runtime via decorators)
@@ -79,6 +72,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migration cookbook (common SSIS patterns with before/after code comparisons)
 - JSON Schema export for `migration_config.yaml` validation by external tools
 - VS Code extension (inline assessment, syntax highlighting for generated artifacts)
+
+---
+
+## [1.6.0] - 2026-03-14
+
+### ✨ Phase 8 — Expression & Transpiler Completeness
+
+#### Bitwise Operators
+- `BITAND(a, b)`, `BITOR(a, b)`, `BITXOR(a, b)` in PySpark (`.bitwiseAND/OR/XOR()`)
+- `BITAND`, `BITOR`, `BITXOR` in Power Query M (`Number.BitwiseAnd/Or/Xor`)
+
+#### Recursive Nested Expression Handling
+- PySpark transpiler rewritten with recursive descent parser (mirrors M architecture)
+- Nested calls now handled at arbitrary depth: `UPPER(SUBSTRING(REPLACE(...), 1, 5))`
+- Internal helpers: `_find_close_paren()`, `_split_args()`, `_conv()` with string-aware parsing
+- Type casts `(DT_*)` now recurse into their operand expressions
+
+#### New SSIS Functions
+- **Date**: `GETUTCDATE()` → `F.to_utc_timestamp()` / `DateTimeZone.UtcNow()`
+- **Trig**: `SIN`, `COS`, `TAN`, `ASIN`, `ACOS`, `ATAN`, `ATAN2` in both PySpark and M
+- **Math**: `LOG2()`, `PI()`, `RAND()` in both targets
+- **String**: `CONCATENATE()` function in PySpark
+
+#### Expression Validation & Error Reporting
+- `ExpressionTranspiler.validate(expr)` returns `ValidationResult` with typed issues
+- Detects: unbalanced parentheses, unknown functions, unrecognised `DT_*` type casts
+- `ExpressionIssue` dataclass with severity (`error`/`warning`/`info`), message, position
+- `ValidationResult.is_valid` property (True when no errors)
+- `_KNOWN_FUNCTIONS` registry covering all 40+ supported SSIS functions
+
+#### C# Transpiler AST Mode
+- Two-pass transpilation: AST structure extraction → line-rule conversion
+- `_extract_structure()` extracts `usings`, `namespace`, `classes`, `methods` from C# source
+- Class declarations → Python `class` stubs, method signatures → `def name(params):`
+- `using` directives stripped from body, mapped to Python imports via `_USING_TO_IMPORT`
+- Namespace wrappers automatically removed
+
+#### Power Query M Parity
+- Fixed `_split_args()` to respect quoted strings (commas inside `"..."` no longer split)
+- Added `GETUTCDATE`, trig functions, `LOG2`, `PI`, `RAND`, bitwise ops to M transpiler
 
 ---
 

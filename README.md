@@ -12,10 +12,10 @@
 
 <p align="center">
   <a href="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml"><img src="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-  <img src="https://img.shields.io/badge/tests-836%20passed-brightgreen?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-964%20passed-brightgreen?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"/>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"/>
-  <img src="https://img.shields.io/badge/version-1.5.0-blue?style=flat-square" alt="Version"/>
+  <img src="https://img.shields.io/badge/version-1.6.0-blue?style=flat-square" alt="Version"/>
   <img src="https://img.shields.io/badge/pipelines-28-orange?style=flat-square" alt="Pipelines"/>
   <img src="https://img.shields.io/badge/notebooks-28-orange?style=flat-square" alt="Notebooks"/>
 </p>
@@ -224,7 +224,7 @@ SSISToFabric/
 │   ├── api.py                          # Public Python API (SSISMigrator facade)
 │   ├── config.py                       # Configuration management
 │   └── logging_config.py              # Structured logging (structlog)
-├── tests/                              # 836 tests across unit + regression
+├── tests/                              # 964 tests across unit + regression
 ├── examples/                           # 12 scenarios + full SSIS project (28 packages)
 ├── azure-pipelines.yml                 # Azure DevOps CI/CD
 ├── .github/workflows/ci.yml           # GitHub Actions CI/CD
@@ -325,6 +325,7 @@ SSIS expressions in Derived Columns, Conditional Splits, and other transforms ar
 | SSIS Expression | Power Query M | PySpark |
 |-----------------|---------------|----------|
 | `GETDATE()` | `DateTime.LocalNow()` | `F.current_timestamp()` |
+| `GETUTCDATE()` | `DateTimeZone.UtcNow()` | `F.to_utc_timestamp(...)` |
 | `UPPER(col)` | `Text.Upper([col])` | `F.upper(F.col("col"))` |
 | `LOWER(col)` | `Text.Lower([col])` | `F.lower(F.col("col"))` |
 | `TRIM(col)` | `Text.Trim([col])` | `F.trim(F.col("col"))` |
@@ -334,30 +335,41 @@ SSIS expressions in Derived Columns, Conditional Splits, and other transforms ar
 | `ISNULL(col)` | `[col] = null` | `F.col("col").isNull()` |
 | `(DT_STR,...) col` | `Text.From([col])` | `.cast("string")` |
 | `(DT_I4) col` | `Int64.From([col])` | `.cast("int")` |
-| `DATEADD("dd",n,col)` | — | `F.date_add(...)` / `F.add_months(...)` |
-| `DATEDIFF("dd",a,b)` | — | `F.datediff(...)` / `F.months_between(...)` |
-| `DATEPART("yyyy",col)` | — | `F.year(...)` / `F.month(...)` / ... |
-| `YEAR/MONTH/DAY(col)` | — | `F.year(...)` / `F.month(...)` / `F.dayofmonth(...)` |
-| `REPLACENULL(col,v)` | — | `F.coalesce(...)` |
+| `DATEADD("dd",n,col)` | `Date.AddDays(col,n)` | `F.date_add(...)` / `F.add_months(...)` |
+| `DATEDIFF("dd",a,b)` | `Duration.Days(b - a)` | `F.datediff(...)` / `F.months_between(...)` |
+| `DATEPART("yyyy",col)` | `Date.Year(col)` | `F.year(...)` / `F.month(...)` / ... |
+| `YEAR/MONTH/DAY(col)` | `Date.Year/Month/Day(col)` | `F.year(...)` / `F.month(...)` / `F.dayofmonth(...)` |
+| `REPLACENULL(col,v)` | `if col = null then v else col` | `F.coalesce(...)` |
 | `NULL(DT_WSTR,n)` | — | `F.lit(None).cast("string")` |
-| `LEFT/RIGHT(col,n)` | — | `F.substring(...)` |
-| `FINDSTRING(col,s)` | — | `F.locate(...)` |
-| `TOKEN(col,d,n)` | — | `F.split(...).getItem(...)` |
-| `REVERSE(col)` | — | `F.reverse(...)` |
-| `ABS/CEILING/FLOOR(col)` | — | `F.abs(...)` / `F.ceil(...)` / `F.floor(...)` |
-| `ROUND(col,p)` | — | `F.round(...)` |
-| `POWER/SQRT/SIGN(col)` | — | `F.pow(...)` / `F.sqrt(...)` / `F.signum(...)` |
+| `LEFT/RIGHT(col,n)` | `Text.Start/End(col,n)` | `F.substring(...)` |
+| `FINDSTRING(col,s)` | `Text.PositionOf(col,s)` | `F.locate(...)` |
+| `TOKEN(col,d,n)` | `List.ItemAt(Text.Split(...))` | `F.split(...).getItem(...)` |
+| `REVERSE(col)` | `Text.Reverse(col)` | `F.reverse(...)` |
+| `ABS/CEILING/FLOOR(col)` | `Number.Abs/RoundUp/RoundDown` | `F.abs(...)` / `F.ceil(...)` / `F.floor(...)` |
+| `ROUND(col,p)` | `Number.Round(col,p)` | `F.round(...)` |
+| `POWER/SQRT/SIGN(col)` | `Number.Power/Sqrt/Sign` | `F.pow(...)` / `F.sqrt(...)` / `F.signum(...)` |
+| `SIN/COS/TAN(col)` | `Number.Sin/Cos/Tan` | `F.sin(...)` / `F.cos(...)` / `F.tan(...)` |
+| `ASIN/ACOS/ATAN(col)` | `Number.Asin/Acos/Atan` | `F.asin(...)` / `F.acos(...)` / `F.atan(...)` |
+| `ATAN2(y,x)` | `Number.Atan2(y,x)` | `F.atan2(y,x)` |
+| `LOG2(col)` | `Number.Log(...)` | `F.log2(...)` |
+| `PI()` | `Number.PI` | `F.lit(3.14159...)` |
+| `RAND()` | `Number.Random()` | `F.rand()` |
+| `BITAND(a,b)` | `Number.BitwiseAnd(a,b)` | `.bitwiseAND(...)` |
+| `BITOR(a,b)` | `Number.BitwiseOr(a,b)` | `.bitwiseOR(...)` |
+| `BITXOR(a,b)` | `Number.BitwiseXor(a,b)` | `.bitwiseXOR(...)` |
 | `(DT_R8) col` | `Number.From([col])` | `.cast("double")` |
-| `(DT_BOOL) col` | — | `.cast("boolean")` |
-| `(DT_DECIMAL,s) col` | — | `.cast("decimal(38,s)")` |
-| `(DT_NUMERIC,p,s) col` | — | `.cast("decimal(p,s)")` |
-| `(DT_CY) col` | — | `.cast("decimal(19,4)")` |
-| `(DT_GUID) col` | — | `.cast("string")` |
-| `(DT_BYTES,n) col` | — | `.cast("binary")` |
+| `(DT_BOOL) col` | `Logical.From([col])` | `.cast("boolean")` |
+| `(DT_DECIMAL,s) col` | `Decimal.From([col])` | `.cast("decimal(38,s)")` |
+| `(DT_NUMERIC,p,s) col` | `Decimal.From([col])` | `.cast("decimal(p,s)")` |
+| `(DT_CY) col` | `Currency.From([col])` | `.cast("decimal(19,4)")` |
+| `(DT_GUID) col` | `Text.From([col])` | `.cast("string")` |
+| `(DT_BYTES,n) col` | `Binary.From([col])` | `.cast("binary")` |
 | `cond ? a : b` | `if cond then a else b` | `F.when(...).otherwise(...)` |
 | `a + b` (concat) | `a & b` | `F.concat(...)` |
 
-Complex expressions that cannot be pattern-matched are emitted with `/* TODO */` comments.
+Nested expressions are recursively transpiled: `UPPER(SUBSTRING(REPLACE(col, "a", "b"), 1, 5))` works in both targets.
+
+Use `ExpressionTranspiler.validate(expr)` to detect unknown functions and unbalanced parentheses before migration.
 
 </details>
 
@@ -583,13 +595,13 @@ ssis2fabric extract-ssisdb "<conn-str>" --folder MyFolder --project MyProject
 ## 🧪 Testing
 
 <p align="center">
-  <img src="https://img.shields.io/badge/tests-836%20passed-brightgreen?style=for-the-badge" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-964%20passed-brightgreen?style=for-the-badge" alt="Tests"/>
   <img src="https://img.shields.io/badge/unit%20tests-792-blue?style=for-the-badge" alt="Unit Tests"/>
   <img src="https://img.shields.io/badge/regression-14-blue?style=for-the-badge" alt="Regression Tests"/>
 </p>
 
 ```bash
-pytest tests/ -v                                     # Run all 836+ tests
+pytest tests/ -v                                     # Run all 964+ tests
 pytest tests/unit/ -v                                # Unit tests only
 pytest tests/unit/test_api.py -v                     # API facade tests
 pytest tests/unit/test_automation_features.py -v     # Expression transpiler tests
@@ -621,7 +633,7 @@ pytest tests/ --cov=ssis_to_fabric --cov-report=html # Coverage report
 
 ```mermaid
 flowchart LR
-    L["🔍 Lint\nruff + mypy"] --> T["🧪 Test\n836 tests\nPy 3.10–3.13"]
+    L["🔍 Lint\nruff + mypy"] --> T["🧪 Test\n964 tests\nPy 3.10–3.13"]
     T --> R["✅ Regression\nBaseline\nvalidation"]
     R --> D["📦 Dry Run\nSample migration"]
     D --> P["🚀 Deploy\nFabric workspace"]
@@ -751,7 +763,7 @@ Both use regex pattern matching. Add new patterns as `re.sub` or `re.match` bloc
 | ~~5~~ | ~~Quality~~ | ~~1.3.0~~ | ~~Event handlers, assessment scoring, config validation, dry-run~~ |
 | ~~6~~ | ~~Fidelity & Scale~~ | ~~1.4.0~~ | ~~SQL injection fix, shared utils, DAG-aware Spark, unified transpiler~~ |
 | **7** | **Observability** ✅ | 1.5.0 | Correlation IDs, per-artifact timing, audit logging, progress callbacks, SVG report charts |
-| **8** | **Transpiler Completeness** | 1.6.0 | Bitwise ops, C# AST transpiler, expression validation, full M parity |
+| **8** | **Transpiler Completeness** ✅ | 1.6.0 | Bitwise ops, recursive nesting, C# AST transpiler, expression validation, trig/math functions |
 | **9** | **Plugin Architecture** | 1.7.0 | Component handler registry, custom transpilers, hook system, entry_points |
 | **10** | **Advanced SSIS** | 1.8.0 | Transactions, checkpoints, disabled tasks, logging providers, WMI/WebService |
 | **11** | **Column Lineage** | 1.9.0 | Column-level lineage, transformation tracking, D3.js Sankey visualization |
