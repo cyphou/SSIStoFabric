@@ -136,7 +136,7 @@ COMPONENT_COMPLEXITY: dict[DataFlowComponentType, MigrationComplexity] = {
     DataFlowComponentType.EXCEL_DESTINATION: MigrationComplexity.MEDIUM,
     DataFlowComponentType.ODBC_DESTINATION: MigrationComplexity.MEDIUM,
     DataFlowComponentType.RAW_FILE_DESTINATION: MigrationComplexity.MEDIUM,
-    DataFlowComponentType.RECORDSET_DESTINATION: MigrationComplexity.HIGH,
+    DataFlowComponentType.RECORDSET_DESTINATION: MigrationComplexity.MEDIUM,
     DataFlowComponentType.SQL_SERVER_DESTINATION: MigrationComplexity.LOW,
     DataFlowComponentType.DATA_READER_DESTINATION: MigrationComplexity.HIGH,
     # Transforms
@@ -152,7 +152,7 @@ COMPONENT_COMPLEXITY: dict[DataFlowComponentType, MigrationComplexity] = {
     DataFlowComponentType.DATA_CONVERSION: MigrationComplexity.MEDIUM,
     DataFlowComponentType.SCRIPT_COMPONENT: MigrationComplexity.HIGH,
     DataFlowComponentType.OLE_DB_COMMAND: MigrationComplexity.MEDIUM,
-    DataFlowComponentType.SLOWLY_CHANGING_DIMENSION: MigrationComplexity.HIGH,
+    DataFlowComponentType.SLOWLY_CHANGING_DIMENSION: MigrationComplexity.MEDIUM,
     DataFlowComponentType.PIVOT: MigrationComplexity.MEDIUM,
     DataFlowComponentType.UNPIVOT: MigrationComplexity.MEDIUM,
     DataFlowComponentType.FUZZY_LOOKUP: MigrationComplexity.HIGH,

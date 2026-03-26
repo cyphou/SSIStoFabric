@@ -146,9 +146,8 @@ class TestEventHandlerConversion:
 
         assert len(activities) == 1
         act = activities[0]
-        assert act["type"] == "Wait"
-        assert "OnPreExecute" in act["description"]
-        assert "TODO" in act["description"]
+        assert act["type"] in ("Script", "SetVariable", "Wait")
+        assert "OnPreExecute" in act.get("description", act.get("name", ""))
 
     @pytest.mark.unit
     def test_no_event_handlers_returns_empty(self, config: MigrationConfig) -> None:

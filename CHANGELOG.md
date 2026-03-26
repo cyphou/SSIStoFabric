@@ -11,15 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > The following phases are planned. Each will be released as a minor or major version.
 
-### Phase 30 — Multi-Cloud Target Support *(v5.0.0)*
-- Target abstraction layer: `FabricTarget`, `DatabricksTarget`, `GlueTarget`, `DataflowTarget`
-- Generator plugins per target leveraging the Phase 9 plugin architecture
-- Databricks output: generate Databricks notebooks + Workflow JSON definitions
-- AWS Glue output: generate Glue ETL scripts (PySpark) + Glue job definitions
-- GCP Dataflow output: generate Apache Beam pipelines + Dataflow templates
-- `--target fabric|databricks|glue|dataflow` CLI flag on migrate command
-
-### Phase 31 — Automated Remediation & Self-Healing *(v5.1.0)*
+### ~~Phase 32 — Automated Remediation & Self-Healing *(v5.2.0)*~~ ✅ Shipped as Phase 33 in v5.2.0
 - Auto-remediation engine: resolve common `# TODO` stubs with template-based code generation
 - Fallback expression resolution: decompose `F.expr()` fallbacks into native PySpark calls
 - Connection string auto-mapping: fuzzy-match SSIS connection managers to Fabric connections
@@ -59,7 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - API key authentication and rate limiting for multi-user access
 - OpenAPI client generation for TypeScript/C#/Java consumers
 
-### Phase 36 — Legacy Modernization Patterns *(v6.0.0)*
+### ~~Phase 36 — Legacy Modernization Patterns *(v6.0.0)*~~ ✅ Shipped as Phase 38 in v5.2.0
 - Pattern library: 20+ modernization patterns (batch→streaming, proc→notebook, flat-file→lakehouse)
 - Modernization advisor: score each package for modernization potential vs lift-and-shift
 - Automatic pattern application: opt-in transformations during migration
@@ -69,17 +61,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [4.2.0] - 2025-07-24
+## [5.2.0] - 2026-03-27
 
-### 🧪 Phase 28 — Migration Validation & Testing Framework
-- Generated test harnesses per pipeline: schema checks, row counts, not-null validation, execution trace tests
-- Schema drift detection between source SSIS destinations and Fabric lakehouse tables (added, removed, type/nullability/length changes)
-- Hash-based record comparison with configurable key and compare columns (beyond simple row counts)
-- Execution trace replay: compare expected vs actual task lists, row counts with tolerance, and status
-- Golden dataset management: save/load reference datasets with schema and versioning for regression testing
-- Schema extraction from SSIS packages and `.destinations.json` sidecar files
-- Comprehensive validation report (JSON) with summary, drifts, record comparisons, and trace results
-- `ssis2fabric test-gen` CLI command to scaffold pytest suites per migrated package
+### 🔧 Phase 33 — Auto-Remediation & Self-Healing
+- **Remediation Engine**: scans generated notebooks/pipelines for `# TODO` stubs and applies template-based code patches
+- **Template Library**: 33 remediation templates covering configuration, expression, manual, verification, and connection stubs
+- **Fuzzy Connection Matching**: Levenshtein-based matching of SSIS connection managers to Fabric catalog entries with confidence scoring
+- **Confidence Scoring**: every remediation classified as HIGH/MEDIUM/LOW; filter by `--min-confidence` to control trust level
+- **Scan & Remediate**: `scan_file()`, `scan_directory()`, `remediate_file()`, `remediate_directory()` composable API
+- **Dry-run Mode**: preview all patches without applying them via `--dry-run` flag
+- **JSON Reporting**: `remediation_report.json` with per-file results, category breakdown, and confidence distribution
+- New CLI command: `ssis2fabric remediate` with `--dry-run` and `--min-confidence HIGH|MEDIUM|LOW`
+- New API method: `SSISMigrator.remediate()` for programmatic access
+
+### 🏗️ Phase 38 — Legacy Modernization Patterns
+- **Medallion Blueprint Generator**: classifies SSIS components into Bronze/Silver/Gold layers by name heuristics and component type
+- **Pattern Recommendation Engine**: scores five modernization patterns (Medallion, Star Schema, Hub-and-Spoke, Event-Driven, Data Mesh) based on package characteristics
+- **Technical-Debt Scoring**: quantifies migration risk per package (0–100) using complexity, TODO count, manual-review proportion, and unsupported components
+- **Wave Planner**: clusters packages into dependency-aware migration waves ordered by increasing debt; configurable `--max-wave-size` and debt thresholds
+- **ModernizationEngine**: full analysis pipeline: blueprint → pattern scoring → debt scoring → wave planning
+- New CLI command: `ssis2fabric modernize` with `--pattern medallion|star_schema|hub_and_spoke|event_driven|data_mesh` and `--max-wave-size`
+- New API method: `SSISMigrator.modernize()` for programmatic access
+- JSON report: `modernization_report.json` with recommended pattern, blueprint, debt scores, and wave plan
+- 136 new tests across both phases (72 remediation + 64 modernization), total suite: 1932
+
+## [5.1.0] - 2026-03-26
+
+### 🔌 Phase 31 — Fabric Native API Integration
+- **OneLake Shortcut Manager**: Deploy S3/GCS/ADLS/OneLake shortcuts into Lakehouse items via REST API
+- **Lakehouse Provisioner**: Create Lakehouse items and provision Delta tables from DDL scripts
+- **Refresh Scheduler**: Attach scheduled triggers (Daily/Weekly) to pipelines and notebooks via Job Scheduler API
+- **Semantic Model Deployer**: Deploy DirectLake semantic models from TMDL definitions (create + update)
+- **Workspace Git Manager**: Connect workspace to Azure DevOps/GitHub, initialize, commit, and pull via Git Integration API
+- Shortcut auto-deployment integrated into `deploy_all()` Phase 0.6 — S3/GCS connections generate OneLake shortcuts automatically
+- 5 new CLI commands: `create-lakehouse`, `schedule-refresh`, `deploy-semantic-model`, `git-connect`, `git-commit`
+- 5 new `SSISMigrator` API methods: `create_lakehouse()`, `schedule_refresh()`, `deploy_semantic_model()`, `git_connect()`
+- All operations support `--dry-run` mode for safe previewing
+- LRO (Long-Running Operation) polling for async Fabric API responses (lakehouse creation, Git operations)
+- 64 new tests covering all managers, CLI commands, API facade methods, and result dataclasses
+
+## [5.0.0] - 2026-03-26
+
+### 🔧 Phase 30 — Gap Closure
+- **SCD Type 2**: Proper row splitting with Delta MERGE — expired rows (EndDate set, IsCurrent=False), new rows (EffectiveDate set, IsCurrent=True), unchanged rows preserved
+- **SCD Type 3**: Previous value column tracking — `Previous_{column}` columns with change detection and `LastModifiedDate` stamping
+- **SCD Type 1**: Overwrite logic with `F.coalesce()` for matched/unmatched rows
+- **Recordset Destination**: SSIS in-memory Recordset mapped to Spark `createOrReplaceTempView()` for cross-cell data sharing
+- **Data Tap**: Debug sampling cell generation with configurable output paths
+- **Event Handler expansion**: OnPreExecute → Script activities, OnPostExecute → Script with Succeeded dependency, OnWarning → WebActivity notification, OnProgress → SetVariable logging (in addition to existing OnError → Failed path)
+- Complexity rescoring: SCD and Recordset Destination downgraded HIGH → MEDIUM in `dtsx_parser.py`
+- New `gap_closure.py` engine module with `generate_scd2_merge()`, `generate_scd3_merge()`, `generate_recordset_destination()`, `generate_data_tap()`, `convert_event_handler_to_activity()`
+- Known Limitations table updated — SCD, Recordset Destination, and Event Handlers marked as resolved
+- 40 new tests covering all gap closure functions, SCD integration through SparkNotebookGenerator, event handler pipeline generation, and complexity rescoring
 
 ## [4.3.0] - 2026-03-14
 

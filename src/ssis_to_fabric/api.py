@@ -483,3 +483,188 @@ class SSISMigrator:
         cat = MetadataCatalog()
         cat.build(packages)
         return cat
+
+    # ------------------------------------------------------------------
+    # 8. Fabric Native API (Phase 31)
+    # ------------------------------------------------------------------
+
+    def create_lakehouse(
+        self,
+        workspace_id: str,
+        name: str,
+        *,
+        description: str = "",
+        ddl_path: str | Path | None = None,
+        dry_run: bool = False,
+        credential: object | None = None,
+    ) -> Any:
+        """Create a Lakehouse and optionally provision Delta tables.
+
+        Returns
+        -------
+        LakehouseResult (or tuple[LakehouseResult, list] when ddl_path given)
+        """
+        from ssis_to_fabric.engine.fabric_api import LakehouseProvisioner
+        from ssis_to_fabric.engine.fabric_deployer import FabricDeployer
+
+        deployer = FabricDeployer(workspace_id, credential=credential, dry_run=dry_run)
+        deployer.authenticate()
+        lp = LakehouseProvisioner(deployer)
+
+        if ddl_path:
+            return lp.create_lakehouse_from_schema(name, Path(ddl_path), description=description)
+        return lp.create_lakehouse(name, description=description)
+
+    def schedule_refresh(
+        self,
+        workspace_id: str,
+        item_id: str,
+        display_name: str,
+        *,
+        frequency: str = "Daily",
+        start_time: str = "02:00",
+        dry_run: bool = False,
+        credential: object | None = None,
+    ) -> Any:
+        """Schedule a refresh trigger for a pipeline or notebook.
+
+        Returns
+        -------
+        ScheduleResult
+        """
+        from ssis_to_fabric.engine.fabric_api import RefreshScheduler, ScheduleConfig
+        from ssis_to_fabric.engine.fabric_deployer import FabricDeployer
+
+        deployer = FabricDeployer(workspace_id, credential=credential, dry_run=dry_run)
+        deployer.authenticate()
+        scheduler = RefreshScheduler(deployer)
+        schedule = ScheduleConfig(frequency=frequency, start_time=start_time)
+        return scheduler.schedule_item(item_id, display_name, schedule)
+
+    def deploy_semantic_model(
+        self,
+        workspace_id: str,
+        name: str,
+        definition_path: str | Path,
+        *,
+        description: str = "",
+        dry_run: bool = False,
+        credential: object | None = None,
+    ) -> Any:
+        """Deploy a DirectLake semantic model from TMDL definition.
+
+        Returns
+        -------
+        SemanticModelResult
+        """
+        from ssis_to_fabric.engine.fabric_api import SemanticModelDeployer
+        from ssis_to_fabric.engine.fabric_deployer import FabricDeployer
+
+        deployer = FabricDeployer(workspace_id, credential=credential, dry_run=dry_run)
+        deployer.authenticate()
+        smd = SemanticModelDeployer(deployer)
+        return smd.deploy_model(name, Path(definition_path), description=description)
+
+    def git_connect(
+        self,
+        workspace_id: str,
+        *,
+        organization: str,
+        repository: str,
+        project: str = "",
+        branch: str = "main",
+        directory: str = "/",
+        provider: str = "AzureDevOps",
+        dry_run: bool = False,
+        credential: object | None = None,
+    ) -> Any:
+        """Connect a workspace to a Git repository and initialize.
+
+        Returns
+        -------
+        tuple[GitResult, GitResult]
+            (connect_result, initialize_result)
+        """
+        from ssis_to_fabric.engine.fabric_api import GitConnectionConfig, WorkspaceGitManager
+        from ssis_to_fabric.engine.fabric_deployer import FabricDeployer
+
+        deployer = FabricDeployer(workspace_id, credential=credential, dry_run=dry_run)
+        deployer.authenticate()
+        git = WorkspaceGitManager(deployer)
+        config = GitConnectionConfig(
+            organization=organization, project=project, repository=repository,
+            branch=branch, directory=directory, provider=provider,
+        )
+        connect_result = git.connect(config)
+        init_result = git.initialize() if connect_result.status == "success" else connect_result
+        return connect_result, init_result
+
+    # ------------------------------------------------------------------
+    # 9. Auto-Remediation (Phase 33)
+    # ------------------------------------------------------------------
+
+    def remediate(
+        self,
+        output_dir: str | Path | None = None,
+        *,
+        min_confidence: str = "LOW",
+        dry_run: bool = False,
+    ) -> Any:
+        """Scan generated artefacts for TODO stubs and auto-remediate.
+
+        Parameters
+        ----------
+        output_dir : str or Path, optional
+            Directory containing generated notebooks/pipelines.
+            Defaults to ``self.output_dir``.
+        min_confidence : str
+            Minimum confidence level: ``"HIGH"``, ``"MEDIUM"``, or ``"LOW"``.
+        dry_run : bool
+            If *True*, preview patches without applying them.
+
+        Returns
+        -------
+        RemediationReport
+        """
+        from ssis_to_fabric.engine.remediation import Confidence, RemediationEngine
+
+        out = Path(output_dir) if output_dir else self._config.output_dir
+        engine = RemediationEngine(min_confidence=Confidence(min_confidence), dry_run=dry_run)
+        return engine.remediate_directory(out)
+
+    # ------------------------------------------------------------------
+    # 10. Legacy Modernization (Phase 38)
+    # ------------------------------------------------------------------
+
+    def modernize(
+        self,
+        path: str | Path,
+        *,
+        pattern: str | None = None,
+        max_wave_size: int = 5,
+    ) -> Any:
+        """Analyse SSIS packages and recommend modernization patterns.
+
+        Parameters
+        ----------
+        path : str or Path
+            SSIS package file or project directory.
+        pattern : str, optional
+            Force a specific pattern (``"medallion"``, ``"star_schema"``,
+            ``"hub_and_spoke"``, ``"event_driven"``, ``"data_mesh"``).
+        max_wave_size : int
+            Maximum number of packages per migration wave.
+
+        Returns
+        -------
+        ModernizationReport
+        """
+        from ssis_to_fabric.engine.modernization import ModernizationEngine, ModernizationPattern
+
+        packages = self.analyze(path)
+        assessment = self._engine.assess(packages)
+        assessments = assessment.packages if hasattr(assessment, "packages") else []
+
+        forced = ModernizationPattern(pattern) if pattern else None
+        engine = ModernizationEngine(pattern=forced, max_wave_size=max_wave_size)
+        return engine.analyze(packages, assessments=assessments)

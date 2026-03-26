@@ -77,8 +77,8 @@
 ```
 src/ssis_to_fabric/
 ├── analyzer/         → dtsx_parser.py, models.py (Pydantic)
-├── engine/           → 32 migration modules
-├── cli.py            → 33 Click CLI commands
+├── engine/           → 34 migration modules
+├── cli.py            → 35 Click CLI commands
 ├── api.py            → SSISMigrator facade
 ├── config.py         → MigrationConfig (Pydantic)
 └── logging_config.py → structlog

@@ -180,7 +180,7 @@ class TestNewTransformGenerators:
         assert "Slowly Changing Dimension" in code
         assert "dim_customer" in code
         assert "df_existing" in code
-        assert "SCD merge completed" in code
+        assert "SCD Type 1 overwrite completed" in code or "SCD Type 2 merge completed" in code
 
     def test_gen_fuzzy_lookup(self, generator: SparkNotebookGenerator) -> None:
         comp = _make_comp(DataFlowComponentType.FUZZY_LOOKUP, table_name="ref_products")

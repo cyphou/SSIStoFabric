@@ -1820,3 +1820,281 @@ def catalog(path: str, query: str | None, tags: str | None, export_fmt: str, out
     fmt = ExportFormat(export_fmt)
     report_path = cat.write_catalog(Path(output), fmt=fmt)
     console.print(f"\n[green]Catalog exported ({export_fmt}): {report_path}[/green]")
+
+
+# ── Phase 31: Fabric Native API ─────────────────────────────────────
+
+
+@main.command(name="create-lakehouse")
+@click.argument("workspace_id")
+@click.argument("name")
+@click.option("--description", "-d", default="", help="Lakehouse description")
+@click.option("--ddl", type=click.Path(exists=True), help="DDL file for table provisioning")
+@click.option("--dry-run", is_flag=True, help="Preview without creating")
+@click.pass_context
+def create_lakehouse(
+    ctx: click.Context, workspace_id: str, name: str,
+    description: str, ddl: str | None, dry_run: bool,
+) -> None:
+    """Create a Fabric Lakehouse and optionally provision Delta tables."""
+    from ssis_to_fabric.engine.fabric_api import LakehouseProvisioner
+    from ssis_to_fabric.engine.fabric_deployer import FabricDeployer
+
+    deployer = FabricDeployer(workspace_id, dry_run=dry_run)
+    deployer.authenticate()
+    lp = LakehouseProvisioner(deployer)
+
+    if ddl:
+        lh_result, table_results = lp.create_lakehouse_from_schema(
+            name, Path(ddl), description=description,
+        )
+        click.echo(f"Lakehouse: {lh_result.status} (id={lh_result.item_id})")
+        for tr in table_results:
+            click.echo(f"  Table {tr['table']}: {tr['status']}")
+    else:
+        result = lp.create_lakehouse(name, description=description)
+        click.echo(f"Lakehouse '{name}': {result.status} (id={result.item_id})")
+
+
+@main.command(name="schedule-refresh")
+@click.argument("workspace_id")
+@click.argument("item_id")
+@click.argument("item_name")
+@click.option("--frequency", type=click.Choice(["Daily", "Weekly"]), default="Daily")
+@click.option("--start-time", default="02:00", help="Start time in HH:MM UTC")
+@click.option("--dry-run", is_flag=True, help="Preview without scheduling")
+@click.pass_context
+def schedule_refresh(
+    ctx: click.Context, workspace_id: str, item_id: str, item_name: str,
+    frequency: str, start_time: str, dry_run: bool,
+) -> None:
+    """Schedule a refresh trigger for a Fabric pipeline or notebook."""
+    from ssis_to_fabric.engine.fabric_api import RefreshScheduler, ScheduleConfig
+    from ssis_to_fabric.engine.fabric_deployer import FabricDeployer
+
+    deployer = FabricDeployer(workspace_id, dry_run=dry_run)
+    deployer.authenticate()
+    scheduler = RefreshScheduler(deployer)
+
+    schedule = ScheduleConfig(frequency=frequency, start_time=start_time)
+    result = scheduler.schedule_item(item_id, item_name, schedule)
+    click.echo(f"Schedule '{item_name}': {result.status}")
+    if result.error:
+        click.echo(f"  Error: {result.error}")
+
+
+@main.command(name="deploy-semantic-model")
+@click.argument("workspace_id")
+@click.argument("name")
+@click.argument("definition_path", type=click.Path(exists=True))
+@click.option("--description", "-d", default="", help="Semantic model description")
+@click.option("--dry-run", is_flag=True, help="Preview without deploying")
+@click.pass_context
+def deploy_semantic_model(
+    ctx: click.Context, workspace_id: str, name: str, definition_path: str,
+    description: str, dry_run: bool,
+) -> None:
+    """Deploy a DirectLake semantic model from TMDL definition."""
+    from ssis_to_fabric.engine.fabric_api import SemanticModelDeployer
+    from ssis_to_fabric.engine.fabric_deployer import FabricDeployer
+
+    deployer = FabricDeployer(workspace_id, dry_run=dry_run)
+    deployer.authenticate()
+    smd = SemanticModelDeployer(deployer)
+
+    result = smd.deploy_model(name, Path(definition_path), description=description)
+    click.echo(f"Semantic model '{name}': {result.status} (id={result.item_id})")
+    if result.error:
+        click.echo(f"  Error: {result.error}")
+
+
+@main.command(name="git-connect")
+@click.argument("workspace_id")
+@click.option("--org", required=True, help="Organization or owner name")
+@click.option("--project", default="", help="Project name (Azure DevOps)")
+@click.option("--repo", required=True, help="Repository name")
+@click.option("--branch", default="main", help="Branch name")
+@click.option("--directory", default="/", help="Root directory in repo")
+@click.option("--provider", type=click.Choice(["AzureDevOps", "GitHub"]), default="AzureDevOps")
+@click.option("--dry-run", is_flag=True, help="Preview without connecting")
+@click.pass_context
+def git_connect(
+    ctx: click.Context, workspace_id: str, org: str, project: str,
+    repo: str, branch: str, directory: str, provider: str, dry_run: bool,
+) -> None:
+    """Connect a Fabric workspace to a Git repository."""
+    from ssis_to_fabric.engine.fabric_api import GitConnectionConfig, WorkspaceGitManager
+    from ssis_to_fabric.engine.fabric_deployer import FabricDeployer
+
+    deployer = FabricDeployer(workspace_id, dry_run=dry_run)
+    deployer.authenticate()
+    git = WorkspaceGitManager(deployer)
+
+    config = GitConnectionConfig(
+        organization=org, project=project, repository=repo,
+        branch=branch, directory=directory, provider=provider,
+    )
+    result = git.connect(config)
+    click.echo(f"Git connect: {result.status}")
+    if result.error:
+        click.echo(f"  Error: {result.error}")
+
+    if result.status == "success":
+        init_result = git.initialize()
+        click.echo(f"Git initialize: {init_result.status}")
+
+
+@main.command(name="git-commit")
+@click.argument("workspace_id")
+@click.option("--message", "-m", required=True, help="Commit message")
+@click.option("--dry-run", is_flag=True, help="Preview without committing")
+@click.pass_context
+def git_commit(
+    ctx: click.Context, workspace_id: str, message: str, dry_run: bool,
+) -> None:
+    """Commit workspace changes to Git."""
+    from ssis_to_fabric.engine.fabric_api import WorkspaceGitManager
+    from ssis_to_fabric.engine.fabric_deployer import FabricDeployer
+
+    deployer = FabricDeployer(workspace_id, dry_run=dry_run)
+    deployer.authenticate()
+    git = WorkspaceGitManager(deployer)
+
+    result = git.commit(message)
+    click.echo(f"Git commit: {result.status}")
+    if result.error:
+        click.echo(f"  Error: {result.error}")
+
+
+# ── Phase 33: Auto-Remediation ──────────────────────────────────────
+
+
+@main.command()
+@click.argument("output_dir", type=click.Path(exists=True))
+@click.option("--dry-run", is_flag=True, help="Preview patches without applying them")
+@click.option(
+    "--min-confidence",
+    type=click.Choice(["HIGH", "MEDIUM", "LOW"]),
+    default="LOW",
+    help="Minimum confidence level for auto-patches",
+)
+@click.pass_context
+def remediate(ctx: click.Context, output_dir: str, dry_run: bool, min_confidence: str) -> None:
+    """Scan migration output for TODO stubs and apply auto-remediation patches."""
+    from ssis_to_fabric.engine.remediation import Confidence, RemediationEngine
+
+    engine = RemediationEngine(
+        min_confidence=Confidence(min_confidence),
+        dry_run=dry_run,
+    )
+    report = engine.remediate_directory(Path(output_dir))
+
+    # Summary table
+    table = Table(title="Remediation Report")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", justify="right")
+    table.add_row("Files scanned", str(report.total_scanned))
+    table.add_row("TODOs found", str(report.total_todos))
+    table.add_row("Applied", f"[green]{report.applied}[/green]")
+    table.add_row("Skipped", f"[yellow]{report.skipped}[/yellow]")
+    table.add_row("Failed", f"[red]{report.failed}[/red]")
+    console.print(table)
+
+    # Category breakdown
+    if report.by_category:
+        cat_table = Table(title="By Category")
+        cat_table.add_column("Category", style="dim")
+        cat_table.add_column("Count", justify="right")
+        for cat, cnt in sorted(report.by_category.items()):
+            cat_table.add_row(cat, str(cnt))
+        console.print(cat_table)
+
+    # Write report
+    report_path = engine.write_report(report, Path(output_dir))
+    console.print(f"\n[green]Report saved: {report_path}[/green]")
+
+
+# ── Phase 38: Legacy Modernization ──────────────────────────────────
+
+
+@main.command()
+@click.argument("path", type=click.Path(exists=True))
+@click.option(
+    "--pattern",
+    type=click.Choice(["medallion", "star_schema", "hub_and_spoke", "event_driven", "data_mesh"]),
+    default=None,
+    help="Force a specific modernization pattern (auto-detect if omitted)",
+)
+@click.option("--max-wave-size", type=int, default=5, help="Maximum packages per wave")
+@click.option("--output", "-o", type=click.Path(), default=None, help="Output directory for report")
+@click.pass_context
+def modernize(
+    ctx: click.Context, path: str, pattern: str | None,
+    max_wave_size: int, output: str | None,
+) -> None:
+    """Analyse SSIS packages and recommend modernization patterns."""
+    from ssis_to_fabric.engine.modernization import ModernizationEngine, ModernizationPattern
+
+    cfg: MigrationConfig = ctx.obj["config"]
+    parser = DTSXParser()
+    p = Path(path)
+    packages = [parser.parse(p)] if p.is_file() else parser.parse_directory(p)
+
+    if not packages:
+        console.print("[red]No SSIS packages found.[/red]")
+        return
+
+    forced = ModernizationPattern(pattern) if pattern else None
+    engine = ModernizationEngine(pattern=forced, max_wave_size=max_wave_size)
+
+    # Run assessment for debt scoring
+    from ssis_to_fabric.engine.migration_engine import MigrationEngine as ME
+    me = ME(cfg)
+    assessment = me.assess(packages)
+    assessments = assessment.packages if hasattr(assessment, "packages") else []
+
+    report = engine.analyze(packages, assessments=assessments)
+
+    # Recommended pattern
+    console.print(f"\n[bold]Recommended Pattern:[/bold] [cyan]{report.recommended_pattern.value}[/cyan]")
+
+    # Pattern scores
+    score_table = Table(title="Pattern Suitability Scores")
+    score_table.add_column("Pattern", style="cyan")
+    score_table.add_column("Score", justify="right")
+    score_table.add_column("Rationale")
+    for ps in report.pattern_scores:
+        score_table.add_row(ps.pattern.value, f"{ps.score:.1f}", "; ".join(ps.rationale))
+    console.print(score_table)
+
+    # Medallion blueprint
+    bp = report.blueprint
+    bp_table = Table(title="Medallion Blueprint")
+    bp_table.add_column("Layer", style="bold")
+    bp_table.add_column("Components", justify="right")
+    bp_table.add_row("[yellow]Bronze[/yellow]", str(len(bp.bronze)))
+    bp_table.add_row("[cyan]Silver[/cyan]", str(len(bp.silver)))
+    bp_table.add_row("[green]Gold[/green]", str(len(bp.gold)))
+    bp_table.add_row("[dim]Unclassified[/dim]", str(len(bp.unclassified)))
+    console.print(bp_table)
+
+    # Waves
+    if report.waves:
+        wave_table = Table(title="Migration Waves")
+        wave_table.add_column("Wave", justify="right")
+        wave_table.add_column("Packages", justify="right")
+        wave_table.add_column("Avg Debt", justify="right")
+        wave_table.add_column("Description")
+        for w in report.waves:
+            wave_table.add_row(
+                str(w.wave_number), str(len(w.packages)),
+                f"{w.avg_debt:.1f}", w.description,
+            )
+        console.print(wave_table)
+
+    # Save report
+    out_dir = Path(output) if output else cfg.output_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report_path = engine.write_report(report, out_dir)
+    console.print(f"\n[green]Modernization report: {report_path}[/green]")
+

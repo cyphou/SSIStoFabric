@@ -1574,6 +1574,9 @@ class FabricDeployer:
         # --- Phase 0.5: Pre-create workspace folders ---
         self._precreate_folders(output_dir)
 
+        # --- Phase 0.6: Deploy OneLake shortcuts (if connection manifests have S3/GCS) ---
+        self._deploy_shortcuts(output_dir)
+
         # --- Phase 1a: Dataflows first ---
         dataflows_dir = output_dir / "dataflows"
         if dataflows_dir.exists():
@@ -1730,6 +1733,61 @@ class FabricDeployer:
             skipped=report.skipped,
         )
         return report
+
+    # ------------------------------------------------------------------
+    # OneLake shortcut deployment (Phase 31)
+    # ------------------------------------------------------------------
+
+    def _deploy_shortcuts(self, output_dir: Path) -> None:
+        """Deploy OneLake shortcuts for S3/GCS connections found in manifests."""
+        from ssis_to_fabric.engine.connectors import SSISConnection, generate_shortcut
+        from ssis_to_fabric.engine.fabric_api import OneLakeShortcutManager
+
+        connections_dir = output_dir / "connections"
+        if not connections_dir.exists():
+            return
+
+        shortcuts = []
+        for conn_file in sorted(connections_dir.glob("*.json")):
+            data = json.loads(conn_file.read_text(encoding="utf-8"))
+            conn = SSISConnection(
+                name=data.get("name", conn_file.stem),
+                connection_type=data.get("connection_type", "UNKNOWN"),
+                connection_string=data.get("connection_string", ""),
+                server=data.get("server", ""),
+                database=data.get("database", ""),
+                provider=data.get("provider", ""),
+                properties=data.get("properties", {}),
+            )
+            sc = generate_shortcut(conn)
+            if sc is not None:
+                shortcuts.append(sc)
+
+        if not shortcuts:
+            return
+
+        # Need a lakehouse ID to create shortcuts in. Look for existing lakehouse
+        # or create one.
+        existing = self._load_existing_items()
+        lakehouse_id = ""
+        for key, item_id in existing.items():
+            if key.startswith("Lakehouse::"):
+                lakehouse_id = item_id
+                break
+
+        if not lakehouse_id:
+            logger.info("no_lakehouse_for_shortcuts", count=len(shortcuts))
+            return
+
+        mgr = OneLakeShortcutManager(self)
+        results = mgr.deploy_shortcuts(shortcuts, lakehouse_id)
+        for r in results:
+            logger.info(
+                "shortcut_result",
+                name=r.name,
+                status=r.status,
+                error=r.error,
+            )
 
     # ------------------------------------------------------------------
     # Parallel deployment

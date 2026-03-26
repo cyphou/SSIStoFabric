@@ -12,12 +12,12 @@
 
 <p align="center">
   <a href="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml"><img src="https://github.com/cyphou/SSIS-To-Fabric/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-  <img src="https://img.shields.io/badge/tests-1677%20passed-brightgreen?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-1932%20passed-brightgreen?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"/>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"/>
-  <img src="https://img.shields.io/badge/version-4.3.0-blue?style=flat-square" alt="Version"/>
-  <img src="https://img.shields.io/badge/CLI%20commands-33-orange?style=flat-square" alt="CLI Commands"/>
-  <img src="https://img.shields.io/badge/engine%20modules-32-orange?style=flat-square" alt="Engine Modules"/>
+  <img src="https://img.shields.io/badge/version-5.2.0-blue?style=flat-square" alt="Version"/>
+  <img src="https://img.shields.io/badge/CLI%20commands-35-orange?style=flat-square" alt="CLI Commands"/>
+  <img src="https://img.shields.io/badge/engine%20modules-34-orange?style=flat-square" alt="Engine Modules"/>
 </p>
 
 <p align="center">
@@ -171,7 +171,7 @@ Branch-per-migration, artifact diffing, change tracking, git-sync, `.fabricignor
 </table>
 
 > [!NOTE]
-> **33 CLI commands**, **32 engine modules**, and **1677+ tests** — migrating SSIS packages from the included real example projects (MIT licensed).
+> **35 CLI commands**, **34 engine modules**, and **1932+ tests** — migrating SSIS packages from the included real example projects (MIT licensed).
 
 ---
 
@@ -257,14 +257,16 @@ SSISToFabric/
 │   │   ├── connectors.py              #   Enterprise connectors (SAP/Oracle/S3/etc.)
 │   │   ├── intelligence.py            #   AI pattern recognition, NL queries, auto tests
 │   │   ├── metadata_catalog.py        #   Metadata catalog, full-text search, Purview export
+│   │   ├── remediation.py             #   Auto-remediation: TODO stub scanning & template patching
+│   │   ├── modernization.py           #   Legacy modernization: medallion, debt scoring, wave planner
 │   │   └── utils.py                   #   Shared generator utilities
 │   ├── testing/                        # Test framework
 │   │   └── regression_runner.py       #   Non-regression baseline validation
-│   ├── cli.py                          # 32 CLI commands (ssis2fabric)
+│   ├── cli.py                          # 35 CLI commands (ssis2fabric)
 │   ├── api.py                          # Public Python API (SSISMigrator facade)
 │   ├── config.py                       # Configuration management (Pydantic)
 │   └── logging_config.py              # Structured logging (structlog)
-├── tests/                              # 1677+ tests (38 unit files + regression)
+├── tests/                              # 1932+ tests (40 unit files + regression)
 ├── examples/                           # 12 scenarios + full SSIS project (28 packages)
 ├── azure-pipelines.yml                 # Azure DevOps CI/CD
 ├── migration_config.yaml               # Default configuration
@@ -620,6 +622,8 @@ from ssis_to_fabric import (
 | `ssis2fabric benchmark <path>` | Profile performance and recommend Fabric SKU |
 | `ssis2fabric connector-map <path>` | Map SSIS connections to Fabric connectors |
 | `ssis2fabric smart-analyze <path>` | AI-powered pattern recognition and strategy advice |
+| `ssis2fabric remediate <output_dir>` | Scan TODO stubs and apply auto-remediation patches |
+| `ssis2fabric modernize <path>` | Recommend modernization patterns and plan migration waves |
 
 ```bash
 # Analyze packages
@@ -653,8 +657,8 @@ ssis2fabric extract-ssisdb "<conn-str>" --folder MyFolder --project MyProject
 ## 🧪 Testing
 
 <p align="center">
-  <img src="https://img.shields.io/badge/tests-1677%20passed-brightgreen?style=for-the-badge" alt="Tests"/>
-  <img src="https://img.shields.io/badge/unit%20tests-38%20files-blue?style=for-the-badge" alt="Unit Tests"/>
+  <img src="https://img.shields.io/badge/tests-1932%20passed-brightgreen?style=for-the-badge" alt="Tests"/>
+  <img src="https://img.shields.io/badge/unit%20tests-40%20files-blue?style=for-the-badge" alt="Unit Tests"/>
   <img src="https://img.shields.io/badge/regression-14-blue?style=for-the-badge" alt="Regression Tests"/>
 </p>
 
@@ -692,7 +696,9 @@ pytest tests/ --cov=ssis_to_fabric --cov-report=html # Coverage report
 | `test_phase20_streaming.py` | 14 | Event Hub/Kafka/CDC detection, Eventstream |
 | `test_non_regression.py` | 14 | Baseline comparison (regression) |
 | `test_phase18_gitops.py` | 13 | Git-sync, fabricignore, artifact diff |
-| + 16 more test files | — | Phases 5–16, CLI, config, migration engine |
+| `test_phase33_remediation.py` | 72 | TODO scanning, templates, fuzzy matching, engine |
+| `test_phase38_modernization.py` | 64 | Medallion, debt scoring, waves, pattern recommendation |
+| + 18 more test files | — | Phases 5–16, CLI, config, migration engine |
 
 </details>
 
@@ -700,7 +706,7 @@ pytest tests/ --cov=ssis_to_fabric --cov-report=html # Coverage report
 
 ```mermaid
 flowchart LR
-    L["🔍 Lint\nruff + mypy"] --> T["🧪 Test\n1508 tests\nPy 3.10–3.14"]
+    L["🔍 Lint\nruff + mypy"] --> T["🧪 Test\n1932 tests\nPy 3.10–3.14"]
     T --> R["✅ Regression\nBaseline\nvalidation"]
     R --> D["📦 Dry Run\nSample migration"]
     D --> P["🚀 Deploy\nFabric workspace"]
@@ -819,7 +825,7 @@ Both use regex pattern matching. Add new patterns as `re.sub` or `re.match` bloc
 
 ## 🗺️ Roadmap
 
-> Phases 1–26 are complete. Phases 27–36 are planned — see [CHANGELOG.md](CHANGELOG.md) for details.
+> Phases 1–29 are complete. Phases 30–41 are planned — see [CHANGELOG.md](CHANGELOG.md) for details.
 
 | Phase | Name | Version | Focus |
 |-------|------|---------|-------|
@@ -852,13 +858,18 @@ Both use regex pattern matching. Add new patterns as `re.sub` or `re.match` bloc
 | **27** | **Package Decomposition** ✅ | 4.1.0 | Monolith splitting, subgraph extraction, reusable notebooks, ExecutePipeline links |
 | **28** | **Validation Framework** ✅ | 4.2.0 | Test harness generation, schema drift detection, hash-based record comparison |
 | **29** | **Metadata Catalog** ✅ | 4.3.0 | Searchable metadata store, dependency matrix, Purview export |
-| **30** | **Multi-Cloud Targets** | 5.0.0 | Databricks, AWS Glue, GCP Dataflow output generators, target abstraction |
-| **31** | **Auto-Remediation** | 5.1.0 | TODO stub resolution, fallback decomposition, fuzzy connection mapping |
-| **32** | **Migration Analytics** | 5.2.0 | History tracking, trend dashboards, team comparison, Power BI export |
-| **33** | **Disaster Recovery** | 5.3.0 | Cloud-backed checkpoints, resumable migration, artifact backup, DR runbooks |
-| **34** | **Compliance Frameworks** | 5.4.0 | HIPAA/PCI-DSS/ISO 27001 rule sets, evidence packages, SIEM audit trails |
-| **35** | **API-First & SDK** | 5.5.0 | REST API server, Python SDK, webhooks, GraphQL, OpenAPI client generation |
-| **36** | **Legacy Modernization** | 6.0.0 | 20+ modernization patterns, medallion architecture, wave planner |
+| **30** | **Gap Closure** ✅ | 5.0.0 | SCD Types 1/2/3, full event handlers, Recordset Dest, Data Tap, re-scoring |
+| **31** | **Fabric Native API** ✅ | 5.1.0 | OneLake shortcuts, lakehouse tables, refresh scheduling, semantic model, Git API |
+| **32** | **Auto-Remediation** ✅ | 5.2.0 | TODO stub resolution, fuzzy connection mapping, template patching, confidence scoring |
+| **33** | **Legacy Modernization** ✅ | 5.2.0 | Medallion architecture, 5-pattern scoring, debt scoring, wave planner |
+| **34** | **Migration Analytics** | 5.3.0 | History tracking, trend dashboards, Power BI export, burndown charts |
+| **35** | **Disaster Recovery** | 5.4.0 | Cloud-backed checkpoints, resumable migration, point-in-time rollback |
+| **36** | **Compliance Frameworks** | 5.5.0 | HIPAA/PCI-DSS/ISO 27001/SOX rule sets, evidence packages, SIEM export |
+| **37** | **API-First & SDK** | 6.0.0 | REST API server, Python SDK, webhooks, GraphQL, OpenAPI spec |
+| **38** | **Multi-Cloud Targets** | 6.1.0 | Target abstraction layer, Databricks/AWS Glue/GCP Dataflow generators |
+| **39** | **Migration Studio** | 6.2.0 | Visual web editor, drag-and-drop mapping, live preview, collaboration |
+| **40** | **Marketplace** | 6.3.0 | Template registry, community plugins, pattern sharing, portable bundles |
+| **41** | **Autonomous Agent** | 6.4.0 | Zero-touch migration, self-learning patterns, LLM decisions, feedback loop |
 
 ---
 
@@ -867,10 +878,11 @@ Both use regex pattern matching. Add new patterns as `re.sub` or `re.match` bloc
 | Area | Limitation | Workaround |
 |------|-----------|------------|
 | **Script Tasks** | Complex .NET interop or COM references in C# scripts produce `# TODO` stubs | Manual review; Phase 21 AST transpiler handles most standard .NET BCL calls |
-| **Event Handlers** | Only `OnError` fully converted; other handlers emit placeholder Wait activities | Review and customize generated placeholders |
-| **SCD** | Only Type 2 supported; Type 1/3+ produce skeletons | Extend merge logic manually |
+| **Event Handlers** | `OnError` fully converted; `OnPreExecute`/`OnPostExecute`/`OnWarning`/`OnProgress` converted to typed activities; rare handlers (`OnQueryCancel`, `OnVariableValueChanged`) emit placeholders | Review rare handler placeholders |
+| **SCD** | Types 1, 2, and 3 fully supported with proper row splitting; custom SCD patterns beyond standard types need manual review | Extend merge logic for custom patterns |
 | **Nested Containers** | Sequence containers are flattened (no true nesting) | Dependency graph preserves execution order |
 | **Streaming** | Real-time patterns detected but Eventstream artifacts are templates | Configure Eventstream manually in Fabric portal |
+| **Recordset Dest** | Converted to Spark TempView pattern; cross-notebook variable passing not automated | Chain cells using `spark.sql("SELECT * FROM view_name")` |
 
 ---
 

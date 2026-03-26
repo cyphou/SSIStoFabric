@@ -1445,13 +1445,23 @@ class DataFactoryGenerator:
     # =========================================================================
 
     def _event_handlers_to_activities(self, package: SSISPackage) -> list[dict[str, Any]]:
-        """Convert SSIS event handlers into Fabric pipeline failure-path activities.
+        """Convert SSIS event handlers into Fabric pipeline activities.
 
-        SSIS ``OnError`` handlers become activities that depend on any other
-        activity's ``Failed`` condition.  ``OnPreExecute`` / ``OnPostExecute``
-        are noted but not auto-migrated (emitted as placeholder Wait
-        activities with TODO comments).
+        Event type mappings:
+        - ``OnError`` → Failed dependency chain activities
+        - ``OnPreExecute`` → Pre-flight validation Script activity
+        - ``OnPostExecute`` → Post-flight logging Script activity
+        - ``OnWarning`` → Alert/notification WebActivity
+        - ``OnProgress`` → Progress-tracking SetVariable activity
+        - Others → Placeholder Wait activities with TODO comments
         """
+        from ssis_to_fabric.engine.gap_closure import (
+            build_post_execute_activity,
+            build_pre_execute_activity,
+            build_progress_activity,
+            build_warning_activity,
+        )
+
         activities: list[dict[str, Any]] = []
         if not package.event_handlers:
             return activities
@@ -1473,8 +1483,18 @@ class DataFactoryGenerator:
                         for name in top_names
                     ]
                     activities.append(act)
+            elif eh.event_type == "OnPreExecute":
+                activities.append(build_pre_execute_activity(eh.event_type, len(eh.tasks)))
+            elif eh.event_type == "OnPostExecute":
+                activities.append(
+                    build_post_execute_activity(eh.event_type, len(eh.tasks), top_names)
+                )
+            elif eh.event_type == "OnWarning":
+                activities.append(build_warning_activity(eh.event_type, len(eh.tasks)))
+            elif eh.event_type == "OnProgress":
+                activities.append(build_progress_activity(eh.event_type, len(eh.tasks)))
             else:
-                # OnPreExecute, OnPostExecute, OnWarning, etc. — emit placeholder
+                # OnVariableValueChanged, OnPreValidate, OnPostValidate, OnQueryCancel, etc.
                 act = {
                     "name": self._sanitize_name(f"EventHandler_{eh.event_type}"),
                     "type": "Wait",

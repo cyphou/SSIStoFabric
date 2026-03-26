@@ -774,71 +774,74 @@ class SparkNotebookGenerator:
     # Slowly Changing Dimension (SCD)
     # -----------------------------------------------------------------
     def _gen_scd(self, comp: DataFlowComponent) -> str:
+        from ssis_to_fabric.engine.gap_closure import (
+            generate_scd2_merge,
+            generate_scd3_merge,
+        )
+
         table = comp.table_name or comp.properties.get("OpenRowset", "dim_table")
         safe_table = self._sanitize_name(table)
         bk_cols = comp.properties.get("_business_keys", [])
         scd1_cols = comp.properties.get("_scd1_columns", [])
         scd2_cols = comp.properties.get("_scd2_columns", [])
+        scd3_cols = comp.properties.get("_scd3_columns", [])
 
         bk_str = ", ".join(f'"{c}"' for c in bk_cols) if bk_cols else '"business_key"  # TODO: set BK column(s)'
         lines = [
             f"# Slowly Changing Dimension: {comp.name}",
             f"# Target table: {table}",
-            f'df_existing = spark.read.format("delta").table("{safe_table}")',
-            "",
-            "# Join incoming rows to existing dimension on business key(s)",
-            'df_merged = df.alias("src").join(',
-            '    df_existing.alias("tgt"),',
-            f"    on=[{bk_str}],",
-            '    how="full"',
-            ")",
         ]
 
+        # --- SCD Type 1: overwrite columns ---
         if scd1_cols:
             cols_str = ", ".join(f'"{c}"' for c in scd1_cols)
             lines += [
+                f'df_existing = spark.read.format("delta").table("{safe_table}")',
+                "",
+                "# Join incoming rows to existing dimension on business key(s)",
+                'df_merged = df.alias("src").join(',
+                '    df_existing.alias("tgt"),',
+                f"    on=[{bk_str}],",
+                '    how="full"',
+                ")",
                 "",
                 f"# --- Type 1 (overwrite) columns: {cols_str}",
                 "# When matched and values differ → update in place",
             ]
             for c in scd1_cols:
                 lines.append(f'df_merged = df_merged.withColumn("{c}", F.coalesce(F.col("src.{c}"), F.col("tgt.{c}")))')
-
-        if scd2_cols:
-            cols_str = ", ".join(f'"{c}"' for c in scd2_cols)
             lines += [
                 "",
-                f"# --- Type 2 (history) columns: {cols_str}",
-                "# When matched and values differ → expire old row, insert new",
-                "# TODO: Implement SCD2 logic: set EndDate on old row, insert new row with StartDate",
-                'df_merged = df_merged.withColumn("_scd2_changed", F.lit(False))  # TODO: detect changes',
-            ]
-            for c in scd2_cols:
-                lines.append(
-                    f'df_merged = df_merged.withColumn("_scd2_changed", '
-                    f'df_merged["_scd2_changed"] | '
-                    f'(F.col("src.{c}") != F.col("tgt.{c}")))',
-                )
-            lines += [
-                'df_merged = df_merged.withColumn("EffectiveDate", '
-                'F.when(F.col("_scd2_changed"), F.current_timestamp())'
-                '.otherwise(F.col("tgt.EffectiveDate")))',
-                'df_merged = df_merged.withColumn("ExpirationDate", '
-                'F.when(F.col("_scd2_changed"), F.lit(None))'
-                '.otherwise(F.col("tgt.ExpirationDate")))',
-                'df_merged = df_merged.withColumn("IsCurrent", '
-                'F.when(F.col("_scd2_changed"), F.lit(True))'
-                '.otherwise(F.col("tgt.IsCurrent")))',
-                'df_merged = df_merged.drop("_scd2_changed")',
+                'df_merged.write.format("delta").mode("overwrite").option("overwriteSchema", "true") \\',
+                f'    .saveAsTable("{safe_table}")',
+                f'logger.info("SCD Type 1 overwrite completed for {safe_table}")',
             ]
 
-        lines += [
-            "",
-            "# Write back to dimension table",
-            'df_merged.write.format("delta").mode("overwrite").option("overwriteSchema", "true") \\',
-            f'    .saveAsTable("{safe_table}")',
-            f'logger.info("SCD merge completed for {safe_table}")',
-        ]
+        # --- SCD Type 2: proper row splitting ---
+        if scd2_cols:
+            lines.append("")
+            lines.append(generate_scd2_merge(table, safe_table, bk_cols, scd2_cols))
+
+        # --- SCD Type 3: previous value column ---
+        if scd3_cols:
+            lines.append("")
+            lines.append(generate_scd3_merge(table, safe_table, bk_cols, scd3_cols))
+
+        # Fallback if no SCD columns specified
+        if not scd1_cols and not scd2_cols and not scd3_cols:
+            lines += [
+                f'df_existing = spark.read.format("delta").table("{safe_table}")',
+                'df_merged = df.alias("src").join(',
+                '    df_existing.alias("tgt"),',
+                f"    on=[{bk_str}],",
+                '    how="full"',
+                ")",
+                '# TODO: Configure SCD type and column mappings',
+                'df_merged.write.format("delta").mode("overwrite").option("overwriteSchema", "true") \\',
+                f'    .saveAsTable("{safe_table}")',
+                f'logger.info("SCD merge completed for {safe_table}")',
+            ]
+
         return "\n".join(lines)
 
     # -----------------------------------------------------------------
@@ -1172,6 +1175,12 @@ class SparkNotebookGenerator:
                 f'logger.info("Data written to {table} via Fabric connection")',
             ]
             return "\n".join(lines)
+
+        # --- Recordset Destination → TempView ---
+        if comp.component_type == DataFlowComponentType.RECORDSET_DESTINATION:
+            from ssis_to_fabric.engine.gap_closure import generate_recordset_destination
+            variable_name = comp.properties.get("VariableName")
+            return generate_recordset_destination(comp.name, variable_name)
 
         # --- Default: delta / saveAsTable (Fabric Lakehouse) ---
         return dedent(f'''\
