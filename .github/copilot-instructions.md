@@ -1,156 +1,109 @@
-# Copilot Instructions — SSIS to Fabric Migration Tool
+<!-- Copilot instructions for the SSIS to Microsoft Fabric migration project -->
 
-> These instructions define how GitHub Copilot (and any AI coding agent) should
-> operate inside this repository. They are loaded automatically by VS Code
-> GitHub Copilot when `chat.promptFiles` is enabled.
+# Project: SSIS to Microsoft Fabric Migration
 
----
+Automated migration of SSIS artifacts to Microsoft Fabric format.
 
-## 1. Plan Mode Default
-
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions).
-- If something goes sideways, **STOP and re-plan immediately** — don't keep pushing.
-- Use plan mode for verification steps, not just building.
-- Write detailed specs upfront to reduce ambiguity.
-
-## 2. Subagent Strategy
-
-- Use subagents liberally to keep main context window clean.
-- Offload research, exploration, and parallel analysis to subagents.
-- For complex problems, throw more compute at it via subagents.
-- One task per subagent for focused execution.
-
-## 3. Self-Improvement Loop
-
-- After ANY correction from the user: update `tasks/lessons.md` with the pattern.
-- Write rules for yourself that prevent the same mistake.
-- Ruthlessly iterate on these lessons until mistake rate drops.
-- Review lessons at session start for relevant project.
-
-## 4. Verification Before Done
-
-- Never mark a task complete without proving it works.
-- Diff behavior between main and your changes when relevant.
-- Ask yourself: "Would a staff engineer approve this?"
-- Run tests, check logs, demonstrate correctness.
-
-## 5. Demand Elegance (Balanced)
-
-- For non-trivial changes: pause and ask "is there a more elegant way?"
-- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution."
-- Skip this for simple, obvious fixes — don't over-engineer.
-- Challenge your own work before presenting it.
-
-## 6. Autonomous Bug Fixing
-
-- When given a bug report: just fix it. Don't ask for hand-holding.
-- Point at logs, errors, failing tests — then resolve them.
-- Zero context switching required from the user.
-- Go fix failing CI tests without being told how.
-
----
-
-## Task Management
-
-1. **Plan First**: Write plan to `tasks/todo.md` with checkable items.
-2. **Verify Plan**: Check in before starting implementation.
-3. **Track Progress**: Mark items complete as you go.
-4. **Explain Changes**: High-level summary at each step.
-5. **Document Results**: Add review section to `tasks/todo.md`.
-6. **Capture Lessons**: Update `tasks/lessons.md` after corrections.
-
----
-
-## Core Principles
-
-- **Simplicity First**: Make every change as simple as possible. Impact minimal code.
-- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-- **Test Everything**: Every code change must include or update tests.
-- **Preserve Patterns**: Follow existing project conventions (see below).
-
----
-
-## Project-Specific Conventions
-
-### Architecture
+## Architecture — Pipeline
 
 ```
-src/ssis_to_fabric/
-├── analyzer/         → dtsx_parser.py, models.py (Pydantic)
-├── engine/           → 34 migration modules
-├── cli.py            → 35 Click CLI commands
-├── api.py            → SSISMigrator facade
-├── config.py         → MigrationConfig (Pydantic)
-└── logging_config.py → structlog
+SSIS → Microsoft Fabric
 ```
 
-### Code Patterns
+## Project Structure
 
-- **Dataclasses** with `to_dict()` methods for engine entities (`MigrationItem`, `MigrationPlan`, etc.)
-- **`(str, Enum)`** for JSON-serializable enums
-- **`TYPE_CHECKING`** guards for heavy import deferral
-- **Module-level functions** as public API (e.g., `_save_migration_state()`)
-- **Lazy imports** inside CLI commands to keep startup fast
-- Line length: **120** (enforced by `ruff`)
-- Python target: **3.10+**
+- **Source / Extraction**: `src/`
+- **Target / Generation**: `output/`, `src/ssis_to_fabric/`, `src/ssis_to_fabric.egg-info/`
+- **Tests**: `tests/` (81 test files)
+- **Docs**: `docs/`
 
-### Testing
+## Key Modules
 
-- Framework: **pytest** with markers (`@pytest.mark.unit`)
-- Each phase gets its own test file: `test_phase{N}_{name}.py`
-- Tests use real temp directories — no mocking of file I/O
-- Run: `pytest tests/unit/ -v`
+- **Extraction**:
+  - `output\examples\notebooks\CrossSystemSync_Extract_Oracle_Data.py`
+  - `output\examples\notebooks\CrossSystemSync_Extract_SAP_Data.py`
+  - `output\examples\notebooks\EnterpriseETL_Extract_CRM_Pipeline.py`
+  - `output\examples\notebooks\EnterpriseETL_Extract_Financial_Trans.py`
+  - `output\examples\notebooks\TermExtractionLookup_TermExtraction.py`
+  - `output\examples\notebooks\TermExtractionLookup_TermLookup.py`
+  - `output\full_project_migration\notebooks\TermExtractionLookup_TermExtraction.py`
+  - `output\full_project_migration\notebooks\TermExtractionLookup_TermLookup.py`
+  - `src\ssis_to_fabric\analyzer\dtsx_parser.py`
+  - `src\ssis_to_fabric\engine\ssisdb_extractor.py`
+- **Generation**:
+  - `output\examples\notebooks\EnterpriseETL_Import_Exchange_Rates.py`
+  - `output\examples\notebooks\FlatFileImportPackage_Import_Product_CSV.py`
+  - `src\ssis_to_fabric\engine\data_factory_generator.py`
+  - `src\ssis_to_fabric\engine\dataflow_generator.py`
+  - `src\ssis_to_fabric\engine\report_generator.py`
+  - `src\ssis_to_fabric\engine\spark_generator.py`
+- **Assessment**:
+  - `output\examples\notebooks\EnterpriseETL_Validate_External_Resources.py`
+  - `output\examples\notebooks\RegExValidation_ReadPatterns.py`
+  - `output\examples\notebooks\RegExValidation_Validate_Person_Data.py`
+  - `output\full_project_migration\notebooks\RegExValidation_ReadPatterns.py`
+  - `output\full_project_migration\notebooks\RegExValidation_Validate_Person_Data.py`
+  - `src\ssis_to_fabric\engine\migration_validator.py`
+- **Deployment**:
+  - `_deploy.py`
+  - `output\examples\notebooks\CascadingLookup_Resolve_Client_Data.py`
+  - `output\examples\notebooks\LookupCache_Resolve_Client_Data.py`
+  - `output\examples\notebooks\LookupExpression_Resolve_Client_Data.py`
+  - `output\full_project_migration\notebooks\CascadingLookup_Resolve_Client_Data.py`
+  - `output\full_project_migration\notebooks\LookupCache_Resolve_Client_Data.py`
+  - `output\full_project_migration\notebooks\LookupExpression_Resolve_Client_Data.py`
+  - `src\ssis_to_fabric\engine\deployment_hardening.py`
+  - `src\ssis_to_fabric\engine\fabric_deployer.py`
+- **Orchestration**:
+  - `src\ssis_to_fabric\cli.py`
+  - `src\ssis_to_fabric\engine\orchestration.py`
+- **Utilities**:
+  - `output\examples\notebooks\CrossSystemSync_Fetch_API_Data.py`
+  - `output\examples\notebooks\CrossSystemSync_Send_Sync_Report.py`
+  - `output\examples\notebooks\CustomWebServiceSource_Airport_Information.py`
+  - `output\examples\notebooks\DataMatching_Data_Flow_Task.py`
+  - `output\examples\notebooks\DataMining_Data_Flow_Task.py`
+  - `output\examples\notebooks\DataWarehouseETL_Load_DimCustomer.py`
+  - `output\examples\notebooks\DataWarehouseETL_Load_DimProduct.py`
+  - `output\examples\notebooks\DataWarehouseETL_Load_DimStore.py`
+  - `output\examples\notebooks\DataWarehouseETL_Load_Fact_Inventory.py`
+  - `output\examples\notebooks\DataWarehouseETL_Load_Fact_Sales.py`
+  - `output\examples\notebooks\DimensionLoadSCD2_SCD2_Customer_Load.py`
+  - `output\examples\notebooks\EnterpriseETL_Load_Fact_Financial.py`
+  - `output\examples\notebooks\ExecutionTrees_dft_DW_DimOrderProvenance.py`
+  - `output\examples\notebooks\FactTableETL_Load_Order_Lines.py`
+  - `output\examples\notebooks\FactTableETL_Load_Returns.py`
+  - ... and 89 more
 
-### Git
+## Hard Constraints
 
-- Conventional commits: `feat:`, `fix:`, `test:`, `docs:`
-- Branch per feature: `feature/{name}`
+1. **Read before write** — never assume file contents from memory
+2. **Test after every change** — run `pytest tests/ --tb=short -q`
+3. **No duplicate functions** — always search for an existing name before creating one
+4. **Git hygiene** — commit only when tests pass, conventional messages (`feat:`, `fix:`, `test:`, `docs:`)
 
-### Release Checklist
+## Multi-Agent Architecture
 
-1. Update `CHANGELOG.md`
-2. Update version in `pyproject.toml`
-3. Update badges in `README.md`
-4. Update dev plan in `CONTRIBUTING.md`
-5. Run full test suite
-6. Commit and tag
+This project uses a specialized agent architecture. See `docs/AGENTS.md` for the full
+architecture diagram and `.github/agents/` for per-agent definitions.
 
----
+## Workflow Rules
 
-## File References
+### 1. Plan Before Build
+- For multi-step work, create a plan before starting
+- If something goes sideways, STOP and re-plan
 
-| File | Purpose |
-|------|---------|
-| `tasks/todo.md` | Current task plan and progress |
-| `tasks/lessons.md` | Accumulated lessons and anti-patterns |
-| `CONTRIBUTING.md` | Dev plan and roadmap |
-| `CHANGELOG.md` | Version history |
-| `README.md` | User-facing documentation |
+### 2. Read Before Write
+- **Always read target code before editing**
+- Read `copilot-instructions.md` at session start for project rules
 
----
+### 3. Testing Contract
+- Run `pytest tests/ --tb=short -q` after EVERY implementation change
+- If tests fail → fix them before reporting completion
+- New features **require** new tests
+- Never weaken test assertions to make tests pass
 
-## 🤖 Multi-Agent Prompts
-
-Specialized agents live in `.github/prompts/`. Invoke them via `@workspace /prompt` or by name in Copilot Chat.
-
-| Agent | File | Purpose |
-|-------|------|---------|
-| **Planner** | `.github/prompts/planner.prompt.md` | Phase design, roadmap updates, task breakdown, scope estimation |
-| **Migrate** | `.github/prompts/migrate.prompt.md` | Engine modules, code generation, CLI commands, API methods |
-| **Test** | `.github/prompts/test.prompt.md` | Write tests, run suite, fix failures, coverage gaps |
-| **Deploy** | `.github/prompts/deploy.prompt.md` | Push artifacts to Fabric, validate deployments, rollback |
-| **Review** | `.github/prompts/review.prompt.md` | Code review, quality checks, standards enforcement |
-| **Debug** | `.github/prompts/debug.prompt.md` | Root cause analysis, bug fixes, regression prevention |
-| **Release** | `.github/prompts/release.prompt.md` | Version bumps, changelog, badges, git tags |
-
-### Typical Workflow
-
-```
-Planner  →  defines Phase N scope and writes tasks/todo.md
-Migrate  →  implements engine module, CLI, API
-Test     →  writes tests, runs suite, fixes failures
-Review   →  reviews changes against quality checklist
-Debug    →  fixes any bugs found during review/testing
-Release  →  bumps version, updates docs, prepares tag
-Deploy   →  pushes artifacts to Fabric workspace
-```
+### 4. Scope Discipline
+- Only modify files directly related to the task
+- No drive-by refactors
+- Prefer the smallest change that solves the problem
